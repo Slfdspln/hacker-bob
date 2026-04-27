@@ -16,6 +16,7 @@ allowed-tools:
   - mcp__bountyagent__bounty_read_wave_handoffs
   - mcp__bountyagent__bounty_read_findings
   - mcp__bountyagent__bounty_read_verification_round
+  - mcp__bountyagent__bounty_read_evidence_packs
   - mcp__bountyagent__bounty_read_grade_verdict
 ---
 You are Bob's read-only session status command. Give the operator a compact answer about where a Hacker Bob run stands and what command to run next. This is not a debug review.
@@ -53,15 +54,25 @@ Then use the following only if needed for concise status fields:
 - `bounty_read_wave_handoffs({ target_domain })` when a wave is pending or wave health is unclear.
 - `bounty_read_findings({ target_domain })` for finding IDs/severity counts when analytics is incomplete.
 - `bounty_read_verification_round({ target_domain, round: "final" })` for reportable survivor count.
+- `bounty_read_evidence_packs({ target_domain })` only when `bounty_read_pipeline_analytics.data.sessions[0].evidence` is missing/incomplete or evidence details need confirmation.
 - `bounty_read_grade_verdict({ target_domain })` for grade verdict and report readiness.
 
 If MCP reads are unavailable, say `Status fallback mode: MCP reads unavailable or incomplete.` Then read only local session artifacts under `~/bounty-agent-sessions/[target_domain]` and label any uncertain fields as unknown.
+
+## Evidence Status
+Surface evidence status from `bounty_read_pipeline_analytics.data.sessions[0].evidence` whenever available. Print exactly one of:
+- `valid` when final reportable findings are covered by valid evidence packs.
+- `missing/invalid` when evidence is required but missing, malformed, or incomplete. Include missing finding IDs if analytics provides `missing_finding_ids`.
+- `skipped` when there are no final reportable findings and evidence packs are not required.
+- `unknown` when analytics and optional read-only confirmation cannot determine evidence readiness.
+
+If evidence is `missing/invalid` for final reportable findings, list it as a blocking issue. Use `/bob-hunt resume <target_domain>` as the next command when analytics gives a clear `missing_evidence` blocker or missing finding IDs; otherwise use `/bob-debug <target_domain>` to inspect the unclear state.
 
 ## Final Answer Shape
 Always include:
 - Target and phase.
 - Wave state: current wave, pending wave, readiness if known.
-- Findings, verification, grade, and report presence.
+- Findings, verification, evidence status, grade, and report presence.
 - If the update cache says a Bob update is available, include `Update: Hacker Bob <version> available. Run /bob-update.`
 - Any blocking issue visible from status reads.
 - Next command: usually `/bob-hunt resume <target_domain>`, `/bob-debug <target_domain>`, `/bob-debug --deep <target_domain>`, or no action needed.

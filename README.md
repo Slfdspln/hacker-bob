@@ -126,11 +126,11 @@ RECON → AUTH → HUNT → CHAIN → VERIFY → GRADE → REPORT
 2. **AUTH** — Bob tries to sign up. If he can, he keeps a victim and an attacker account in his pocket. If he can't, he shrugs and hunts unauthenticated.
 3. **HUNT** — Parallel hunter agents fan out, one per attack surface. They are not gentle.
 4. **CHAIN** — Bob squints at the findings and asks "wait, can I combine these into something worse?"
-5. **VERIFY** — Three rounds of arguing with himself: skeptical Bob, balanced Bob, and final-PoC Bob. Most "bugs" do not survive.
-6. **GRADE** — 5-axis scoring. Bob decides: SUBMIT, HOLD, or "this is not a bug, please stop."
+5. **VERIFY** — Three rounds of arguing with himself: skeptical Bob, balanced Bob, and final-PoC Bob. Most "bugs" do not survive. After final verification, Bob collects bounded evidence packs for every final reportable finding.
+6. **GRADE** — 5-axis scoring. Bob decides: SUBMIT, HOLD, or "this is not a bug, please stop." Valid evidence packs are required before grading or reporting when final reportable findings exist.
 7. **REPORT** — A clean, submission-ready writeup with PoCs and evidence. No "could potentially". No "an attacker may". Just receipts.
 
-MCP ranking computes runtime priority for status views and hunter briefs. Imports and public-intel fetches do not rewrite `attack_surface.json`.
+MCP ranking computes runtime priority for status views and hunter briefs. `/bob-status` also shows evidence readiness so missing or invalid evidence packs are visible before grade/report work. Imports and public-intel fetches do not rewrite `attack_surface.json`.
 
 ## Requirements
 

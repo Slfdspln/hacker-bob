@@ -426,6 +426,10 @@ test("bob-status skill is compact, read-only, and points to next commands", () =
   assert.match(skill, /bounty_read_pipeline_analytics\(\{ target_domain, include_events: false, limit: 20 \}\)/);
   assert.match(skill, /bounty_read_state_summary\(\{ target_domain \}\)/);
   assert.match(skill, /bounty_wave_status\(\{ target_domain \}\)/);
+  assert.ok(allowedTools.includes("mcp__bountyagent__bounty_read_evidence_packs"));
+  assert.match(skill, /evidence status/);
+  assert.match(skill, /bounty_read_pipeline_analytics\.data\.sessions\[0\]\.evidence/);
+  assert.match(skill, /bounty_read_evidence_packs\(\{ target_domain \}\)/);
   assert.match(skill, /\/bob-hunt resume <target_domain>/);
   assert.match(skill, /\/bob-debug --deep <target_domain>/);
   // Bash tool subprocesses do not always inherit CLAUDE_PROJECT_DIR; the
