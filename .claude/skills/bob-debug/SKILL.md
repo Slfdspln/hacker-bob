@@ -30,6 +30,7 @@ You are the read-only post-session debugger for Bob. Review a completed or stuck
 - Do not use the `Task` tool by default. Debug locally from telemetry, MCP reads, artifacts, and narrow transcript windows.
 - Do not create a debug bundle in v1. Print the assessment only.
 - Telemetry MCPs are the first source of truth. Artifacts and transcripts are supporting evidence.
+- Always include Claude Code session traceability in the printed assessment: session artifact directory, final report path when present, and the Claude transcript path(s) needed to reopen the full chat. This is a locator only; do not dump transcript contents unless `--deep` or policy replay requires a narrow window.
 
 ## Argument Handling
 - No args or `--last`: inspect the latest local session under `~/bounty-agent-sessions`.
@@ -57,6 +58,20 @@ Use these only when they help confirm a telemetry finding or fill a gap:
 - `bounty_read_grade_verdict({ target_domain })`
 
 For local artifact fallback, read only session files under `~/bounty-agent-sessions/[target_domain]` and only Claude transcript JSONL files needed for `--deep`.
+
+## Claude Code Session Traceability
+Every `/bob-debug` assessment must include a short "Claude Code session" line or subsection so another agent can reopen the full conversation when needed.
+
+Resolve it in this order:
+1. From telemetry first: use transcript paths in `bounty_read_tool_telemetry(... include_agent_runs: true)` under `agent_runs.latest_run.transcript_path` and `agent_runs.recent_blocked_runs[].transcript_path`. Label these as subagent/hunter transcripts when they are not the root orchestrator chat.
+2. For the root orchestrator chat, search Claude project JSONL files under `~/.claude/projects` for the target domain, the session artifact directory, or distinctive Bob tool names. Pick the newest plausible matching transcript by mtime. In normal mode, this lookup is only to report the path; do not summarize transcript contents.
+3. If no root transcript is identifiable, say `Claude Code session: root transcript not found` and still list any subagent transcript paths from telemetry.
+
+Keep the traceability output concise:
+- `Session artifacts: <absolute session dir>`
+- `Final report: <absolute report.md path or missing>`
+- `Claude Code session: <root transcript path or root transcript not found>`
+- `Agent transcripts: <count plus paths for the latest/blocked runs, or none found>`
 
 ## What To Check
 - Phase path: whether the session followed RECON -> AUTH -> HUNT -> CHAIN -> VERIFY -> GRADE -> REPORT, or documented EXPLORE after REPORT.
@@ -114,7 +129,7 @@ Also state the suggested case fields: `agent_type`, `failure_type`, `expected`, 
 ## Final Answer Shape
 Always include:
 - Verdict: `clean`, `mostly_ok`, `drifted`, or `broken`.
-- Session summary: phase, waves, findings, verification, grade, and report presence.
+- Session summary: phase, waves, findings, verification, grade, report presence, and Claude Code session traceability.
 - What worked.
 - What drifted from the intended pipeline.
 - Root causes with artifact/transcript evidence.

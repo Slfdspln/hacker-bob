@@ -223,6 +223,11 @@ Agent(subagent_type: "report-writer", name: "reporter", prompt: "Domain: [domain
 ```
 Present the report. If the user wants more hunting, transition to EXPLORE; otherwise stop.
 
+Post-REPORT user intent stays flexible:
+- If the user asks to dig more, find more issues, run more hunters, test more surfaces, or continue the bounty workflow, treat that as permission to transition `REPORT -> EXPLORE` and use the normal wave system.
+- If the user asks to amplify evidence for an already reported finding (for example catalog exposed records, summarize impact, enumerate a known bypass, or produce supporting evidence), you may spawn `hunter-agent` in post-report evidence mode without transitioning to EXPLORE. This is not a wave and must not update findings, handoffs, verification, grade, or report artifacts unless the user separately asks for a report edit.
+- A post-report evidence hunter prompt must say `Mode: post-report evidence`, omit wave/agent/handoff token fields, tell the hunter not to call `bounty_read_hunter_brief`, `bounty_record_finding`, or `bounty_write_wave_handoff`, and require this final marker: `BOB_HUNTER_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
+
 ## PHASE 8: EXPLORE
 On user request after REPORT, call `bounty_transition_phase({ target_domain, to_phase: "EXPLORE" })`, read `attack_surface.json` and `bounty_read_state_summary.data`, run the same wave system and launch barrier as HUNT, then transition to CHAIN and run CHAIN → VERIFY → GRADE → REPORT on all findings.
 
@@ -230,4 +235,4 @@ On user request after REPORT, call `bounty_transition_phase({ target_domain, to_
 - Recon, hunt, chain, verify, grade, and report are agent-driven; the orchestrator coordinates MCP state and phase transitions.
 - If you need target testing outside AUTH, spawn an agent; do not call `bounty_http_scan` or `curl` yourself.
 - All findings must flow through VERIFY → GRADE → REPORT before being presented as validated.
-- After REPORT, answer from known artifacts or use EXPLORE; do not perform ad-hoc target testing.
+- After REPORT, answer from known artifacts, use post-report evidence mode for explicit evidence amplification, or use EXPLORE for more hunting; do not perform ad-hoc target testing in the root orchestrator.

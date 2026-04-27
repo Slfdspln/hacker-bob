@@ -3073,6 +3073,63 @@ test("hunter SubagentStop hook rejects malformed, zero wave, and zero agent mark
   });
 });
 
+test("hunter SubagentStop hook allows post-report evidence markers without wave handoffs", () => {
+  withTempHome((tempHome) => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "REPORT", hunt_wave: 2 });
+
+    const result = runHunterSubagentStop({
+      last_assistant_message: 'Catalog complete. BOB_HUNTER_DONE {"target_domain":"example.com","mode":"evidence","surface_id":"F-1","summary":"cataloged exposed records"}',
+    }, { home: tempHome });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /post-report evidence run accepted/);
+
+    const rows = readJsonl(agentRunTelemetryPath());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].run_type, "evidence");
+    assert.equal(rows[0].status, "allowed");
+    assert.equal(rows[0].target_domain, domain);
+    assert.equal(rows[0].wave, null);
+    assert.equal(rows[0].agent, null);
+    assert.equal(rows[0].surface_id, "F-1");
+    assert.equal(rows[0].handoff.present, false);
+    assert.equal(rows[0].handoff.valid, true);
+    assert.equal(rows[0].handoff.provenance, "post_report_evidence");
+    assert.equal(rows[0].handoff.surface_status, "evidence");
+    assert.equal(rows[0].telemetry_source, "hunter-evidence-stop");
+
+    const pipelineRows = readJsonl(pipelineEventsJsonlPath(domain));
+    const stopped = pipelineRows.find((row) => row.type === "hunter_stopped");
+    assert.ok(stopped);
+    assert.equal(stopped.status, "allowed");
+    assert.equal(stopped.source, "hunter-evidence-stop");
+    assert.equal(Object.prototype.hasOwnProperty.call(stopped, "wave_number"), false);
+    assert.equal(stopped.surface_id, "F-1");
+  });
+});
+
+test("hunter SubagentStop hook blocks evidence markers before REPORT or EXPLORE", () => {
+  withTempHome((tempHome) => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1 });
+
+    const result = runHunterSubagentStop({
+      last_assistant_message: 'BOB_HUNTER_DONE {"target_domain":"example.com","mode":"evidence","surface_id":"F-1","summary":"too early"}',
+    }, { home: tempHome });
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /REPORT or EXPLORE/);
+
+    const rows = readJsonl(agentRunTelemetryPath());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].run_type, "evidence");
+    assert.equal(rows[0].status, "blocked");
+    assert.equal(rows[0].block_code, "evidence_phase_mismatch");
+    assert.equal(rows[0].target_domain, domain);
+  });
+});
+
 test("hunter SubagentStop hook blocks missing structured handoff", async () => {
   await withTempHome(async (tempHome) => {
     const domain = "example.com";

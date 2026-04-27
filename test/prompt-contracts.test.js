@@ -414,6 +414,12 @@ test("bob-debug skill is telemetry-first and supports latest, explicit, and deep
   assert.match(skill, /testing\/policy-replay\/tune\.mjs --transcript/);
   assert.match(skill, /recommended_prompt_change/);
   assert.match(skill, /do not edit the prompt yourself from `\/bob-debug`/);
+  assert.match(skill, /Claude Code Session Traceability/);
+  assert.match(skill, /agent_runs\.latest_run\.transcript_path/);
+  assert.match(skill, /~\/\.claude\/projects/);
+  assert.match(skill, /Session artifacts: <absolute session dir>/);
+  assert.match(skill, /Claude Code session: <root transcript path or root transcript not found>/);
+  assert.match(skill, /report presence, and Claude Code session traceability/);
 });
 
 test("bob-debug skill allowed-tools are read-only and exclude mutators", () => {
@@ -760,4 +766,18 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(orchestratorPrompt, /Missing structured handoffs resolve only through `pending` or explicit `force-merge`\./);
   assert.match(orchestratorPrompt, /bounty_log_coverage/);
   assert.match(orchestratorPrompt, /never write `coverage\.jsonl` through Bash/);
+});
+
+test("post-report evidence hunters are explicit and do not masquerade as wave handoffs", () => {
+  const hunterPrompt = readFile(".claude/agents/hunter-agent.md");
+  const orchestratorPrompt = readFile(".claude/skills/bob-hunt/SKILL.md");
+
+  assert.match(orchestratorPrompt, /Post-REPORT user intent stays flexible/);
+  assert.match(orchestratorPrompt, /transition `REPORT -> EXPLORE`/);
+  assert.match(orchestratorPrompt, /post-report evidence mode without transitioning to EXPLORE/);
+  assert.match(orchestratorPrompt, /BOB_HUNTER_DONE \{"target_domain":"\[domain\]","mode":"evidence"/);
+  assert.match(hunterPrompt, /Post-report evidence mode is different/);
+  assert.match(hunterPrompt, /Do not call `bounty_read_hunter_brief`/);
+  assert.match(hunterPrompt, /Do not call `bounty_record_finding`, `bounty_write_wave_handoff`/);
+  assert.match(hunterPrompt, /"mode":"evidence"/);
 });

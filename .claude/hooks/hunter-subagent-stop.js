@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const MARKER = "BOB_HUNTER_DONE";
+const EVIDENCE_MODE = "evidence";
 
 function readStdin() {
   return fs.readFileSync(0, "utf8");
@@ -121,7 +122,36 @@ function parseToolJson(raw, label) {
   return value;
 }
 
+function cleanString(value) {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function markerMode(marker) {
+  return cleanString(marker?.mode);
+}
+
+function isEvidenceMarker(marker) {
+  return markerMode(marker) === EVIDENCE_MODE;
+}
+
 function markerValidationError(marker) {
+  if (isEvidenceMarker(marker)) {
+    if (!cleanString(marker.target_domain)) {
+      return {
+        block_code: "malformed_marker",
+        reason: "Post-report evidence marker is missing required field: target_domain",
+      };
+    }
+    if (cleanString(marker.wave) || cleanString(marker.agent)) {
+      return {
+        block_code: "malformed_marker",
+        reason: "Post-report evidence marker must not include wave or agent; use the normal wave marker for EXPLORE hunters.",
+      };
+    }
+    return null;
+  }
+
   const missing = ["target_domain", "wave", "agent", "surface_id"].filter((field) => {
     return typeof marker[field] !== "string" || marker[field].trim() === "";
   });
@@ -207,6 +237,44 @@ function inspectStructuredHandoff(server, marker, waveNumber) {
   };
 }
 
+function inspectEvidenceRun(server, marker) {
+  let state;
+  try {
+    const summary = parseToolJson(server.readStateSummary({
+      target_domain: marker.target_domain,
+    }), "bounty_read_state_summary");
+    state = summary.state;
+  } catch (error) {
+    return {
+      ok: false,
+      block_code: "evidence_state_unreadable",
+      reason: `Post-report evidence marker could not read session state: ${error.message || String(error)}`,
+      handoff: handoffTelemetry(null, { present: false, valid: false }),
+    };
+  }
+
+  if (!state || (state.phase !== "REPORT" && state.phase !== "EXPLORE")) {
+    return {
+      ok: false,
+      block_code: "evidence_phase_mismatch",
+      reason: `Post-report evidence marker is allowed only in REPORT or EXPLORE phase; current phase is ${state?.phase || "unknown"}.`,
+      handoff: handoffTelemetry(null, { present: false, valid: false }),
+    };
+  }
+
+  return {
+    ok: true,
+    handoff: {
+      present: false,
+      valid: true,
+      provenance: "post_report_evidence",
+      surface_status: "evidence",
+      summary_present: cleanString(marker.summary) !== "",
+      chain_notes_count: 0,
+    },
+  };
+}
+
 function transcriptPathFromPayload(payload) {
   if (typeof payload.transcript_path === "string") return payload.transcript_path;
   if (typeof payload.transcriptPath === "string") return payload.transcriptPath;
@@ -270,8 +338,9 @@ function telemetryInput({
   handoff = null,
 }) {
   const stats = runStats(server, marker);
+  const evidenceRun = isEvidenceMarker(marker);
   return {
-    runType: "hunter",
+    runType: evidenceRun ? EVIDENCE_MODE : "hunter",
     status,
     blockCode: block_code,
     target_domain: marker?.target_domain,
@@ -282,7 +351,7 @@ function telemetryInput({
     handoff,
     coverage: stats.coverage,
     findings: stats.findings,
-    telemetry_source: "hunter-subagent-stop",
+    telemetry_source: evidenceRun ? "hunter-evidence-stop" : "hunter-subagent-stop",
     now,
   };
 }
@@ -303,7 +372,7 @@ function main() {
   marker = markerResult.marker;
   if (!marker) {
     block(
-      `Hunter stop blocked: write the wave handoff with bounty_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}.`,
+      `Hunter stop blocked: write the wave handoff with bounty_write_wave_handoff, then emit ${MARKER} {"target_domain":"...","wave":"wN","agent":"aN","surface_id":"..."}. For post-report evidence amplification, emit ${MARKER} {"target_domain":"...","mode":"evidence","surface_id":"F-N","summary":"..."}.`,
       telemetryInput({
         payload,
         now,
@@ -321,6 +390,30 @@ function main() {
       now,
       status: "blocked",
       block_code: markerError.block_code,
+    }));
+  }
+
+  if (isEvidenceMarker(marker)) {
+    server = loadServer();
+    const evidenceResult = inspectEvidenceRun(server, marker);
+    if (!evidenceResult.ok) {
+      block(evidenceResult.reason, telemetryInput({
+        payload,
+        marker,
+        now,
+        status: "blocked",
+        block_code: evidenceResult.block_code,
+        server,
+        handoff: evidenceResult.handoff,
+      }));
+    }
+    allow("post-report evidence run accepted", telemetryInput({
+      payload,
+      marker,
+      now,
+      status: "allowed",
+      server,
+      handoff: evidenceResult.handoff,
     }));
   }
 
