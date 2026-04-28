@@ -51,7 +51,7 @@ module.exports = Object.freeze({
     "required": ["target_domain", "chain_id", "address"]
   },
   handler,
-  role_bundles: ["hunter", "verifier"],
+  role_bundles: ["hunter", "verifier", "evidence"],
   mutating: true,
   global_preapproval: true,
   network_access: true,

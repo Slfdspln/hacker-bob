@@ -98,6 +98,11 @@ const ROLE_DEFINITIONS = Object.freeze({
     prompt_body: path.join(ROLE_PROMPT_DIR, "final-verifier.md"),
     mcp_role_bundles: Object.freeze(["verifier"]),
   }),
+  evidence: Object.freeze({
+    id: "evidence",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "evidence.md"),
+    mcp_role_bundles: Object.freeze(["evidence"]),
+  }),
   grader: Object.freeze({
     id: "grader",
     prompt_body: path.join(ROLE_PROMPT_DIR, "grader.md"),

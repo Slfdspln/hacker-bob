@@ -6218,12 +6218,12 @@ test("svm-fetch-program parses BPFLoaderUpgradeable Program account discriminato
   assert.equal(frozenParsed.deployed_slot, 99);
 });
 
-test("svm tools register with verifier role bundle (so balanced/brutalist/final can re-run SVM PoCs)", () => {
+test("svm tools register with verifier and evidence role bundles (so balanced/brutalist/final + evidence-agent can re-run SVM PoCs)", () => {
   const tools = ["bounty_svm_fetch_account", "bounty_svm_fetch_program", "bounty_anchor_run"];
   for (const name of tools) {
     const meta = TOOL_MANIFEST[name];
     assert.ok(meta, `${name} is in TOOL_MANIFEST`);
-    assert.deepEqual(meta.role_bundles, ["hunter", "verifier"], `${name} exposes role_bundles=[hunter, verifier]`);
+    assert.deepEqual(meta.role_bundles, ["hunter", "verifier", "evidence"], `${name} exposes role_bundles=[hunter, verifier, evidence]`);
     assert.equal(meta.network_access, true, `${name} declares network_access`);
   }
 });
@@ -6780,7 +6780,7 @@ test("sui runner classifies CLI usage errors as sui_dependency_missing (Phase 5 
   assert.equal(oldPath, "sui_dependency_missing");
 });
 
-test("Move tools register with verifier role bundle (so balanced/brutalist/final can re-run Aptos/Sui PoCs)", () => {
+test("Move tools register with verifier and evidence role bundles (so balanced/brutalist/final + evidence-agent can re-run Aptos/Sui PoCs)", () => {
   const tools = [
     "bounty_aptos_fetch_resource",
     "bounty_aptos_fetch_module",
@@ -6792,7 +6792,7 @@ test("Move tools register with verifier role bundle (so balanced/brutalist/final
   for (const name of tools) {
     const meta = TOOL_MANIFEST[name];
     assert.ok(meta, `${name} is in TOOL_MANIFEST`);
-    assert.deepEqual(meta.role_bundles, ["hunter", "verifier"], `${name} exposes role_bundles=[hunter, verifier]`);
+    assert.deepEqual(meta.role_bundles, ["hunter", "verifier", "evidence"], `${name} exposes role_bundles=[hunter, verifier, evidence]`);
     assert.equal(meta.network_access, true, `${name} declares network_access`);
   }
 });

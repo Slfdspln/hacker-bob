@@ -22,6 +22,7 @@ const CODEX_WORKER_CONTRACT_ROLE_IDS = Object.freeze([
   "brutalist-verifier",
   "balanced-verifier",
   "final-verifier",
+  "evidence",
   "grader",
   "reporter",
 ]);

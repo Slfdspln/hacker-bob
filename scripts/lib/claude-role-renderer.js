@@ -336,6 +336,17 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     mcp_server: true,
     local_tools: Object.freeze(["Bash"]),
   }),
+  evidence: Object.freeze({
+    role_id: "evidence",
+    kind: "agent",
+    output_path: path.join(".claude", "agents", "evidence-agent.md"),
+    name: "evidence-agent",
+    description: "Collects bounded pre-grade evidence packs for final reportable findings (HTTP via bounty_http_scan; SC via family runners)",
+    model: "sonnet",
+    color: "teal",
+    mcp_server: true,
+    local_tools: Object.freeze([]),
+  }),
   grader: Object.freeze({
     role_id: "grader",
     kind: "agent",

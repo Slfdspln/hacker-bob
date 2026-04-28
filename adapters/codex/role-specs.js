@@ -62,6 +62,11 @@ const CODEX_ROLE_SPECS = Object.freeze({
     agent_type: "worker",
     lifecycle: "wait",
   }),
+  evidence: Object.freeze({
+    bob_role: "evidence-agent",
+    agent_type: "worker",
+    lifecycle: "wait",
+  }),
   grader: Object.freeze({
     bob_role: "grader",
     agent_type: "worker",
