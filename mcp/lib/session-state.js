@@ -28,6 +28,12 @@ const {
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-analytics.js");
+const {
+  computeChainToVerifyGate,
+  computeHuntToChainGate,
+  computeVerifyToGradeGate,
+  formatTransitionBlockers,
+} = require("./phase-gates.js");
 
 function buildInitialSessionState(domain, targetUrl) {
   return {
@@ -218,6 +224,24 @@ function transitionPhase(args) {
       throw new ToolError(ERROR_CODES.STATE_CONFLICT, `Invalid phase transition: ${fromPhase} -> ${toPhase}`);
     }
 
+    let overrideReason = null;
+    const overrideAllowed = (
+      (fromPhase === "HUNT" && toPhase === "CHAIN") ||
+      (fromPhase === "CHAIN" && toPhase === "VERIFY")
+    );
+    if (args.override_reason != null) {
+      if (!overrideAllowed) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason is only allowed for HUNT -> CHAIN or CHAIN -> VERIFY");
+      }
+      if (typeof args.override_reason !== "string" || !args.override_reason.trim()) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason must be a non-empty string");
+      }
+      overrideReason = args.override_reason.trim();
+      if (overrideReason.length < 20) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "override_reason must be at least 20 characters");
+      }
+    }
+
     let nextAuthStatus = state.auth_status;
     if (fromPhase === "AUTH" && toPhase === "HUNT") {
       if (args.auth_status == null) {
@@ -232,6 +256,28 @@ function transitionPhase(args) {
       throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "auth_status is only allowed for AUTH -> HUNT");
     }
 
+    let transitionGate = null;
+    let transitionGateLabel = null;
+    if (fromPhase === "HUNT" && toPhase === "CHAIN") {
+      transitionGate = computeHuntToChainGate(domain, state);
+      transitionGateLabel = "HUNT -> CHAIN";
+    } else if (fromPhase === "CHAIN" && toPhase === "VERIFY") {
+      transitionGate = computeChainToVerifyGate(domain, state);
+      transitionGateLabel = "CHAIN -> VERIFY";
+    } else if (fromPhase === "VERIFY" && toPhase === "GRADE") {
+      transitionGate = computeVerifyToGradeGate(domain, state);
+      transitionGateLabel = "VERIFY -> GRADE";
+    } else if (fromPhase === "GRADE" && toPhase === "REPORT") {
+      transitionGate = computeVerifyToGradeGate(domain, state);
+      transitionGateLabel = "GRADE -> REPORT";
+    }
+    if (transitionGate && transitionGate.transition_blockers.length > 0 && overrideReason == null) {
+      throw new ToolError(
+        ERROR_CODES.STATE_CONFLICT,
+        `${transitionGateLabel} blocked: ${formatTransitionBlockers(transitionGate.transition_blockers)}`,
+      );
+    }
+
     const nextState = {
       ...state,
       phase: toPhase,
@@ -242,7 +288,7 @@ function transitionPhase(args) {
     };
 
     writeSessionStateDocument(domain, raw, nextState);
-    safeAppendPipelineEventDirect(domain, "phase_transitioned", {
+    const eventFields = {
       from_phase: fromPhase,
       to_phase: toPhase,
       phase: toPhase,
@@ -251,7 +297,15 @@ function transitionPhase(args) {
       counts: {
         hold_count: nextState.hold_count,
       },
-    });
+    };
+    if (overrideReason != null) {
+      eventFields.override = true;
+      eventFields.override_reason = overrideReason;
+      eventFields.counts.transition_blockers = transitionGate
+        ? transitionGate.transition_blockers.length
+        : 0;
+    }
+    safeAppendPipelineEventDirect(domain, "phase_transitioned", eventFields);
     return JSON.stringify({
       version: 1,
       transitioned: true,

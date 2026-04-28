@@ -44,7 +44,6 @@ const {
   summarizeFindings,
 } = require("./findings.js");
 const { readScopeExclusions } = require("./scope.js");
-const { rankAttackSurfaces } = require("./ranking.js");
 const {
   buildCircuitBreakerSummary,
   readHttpAuditRecordsFromJsonl,
@@ -59,6 +58,9 @@ const {
 const {
   safeAppendPipelineEventDirect,
 } = require("./pipeline-analytics.js");
+const {
+  computeHuntToChainGate,
+} = require("./phase-gates.js");
 
 function listWaveHandoffFiles(dir, wave) {
   const handoffPrefix = `handoff-${wave}-`;
@@ -615,33 +617,24 @@ function computeRequeueSurfaceIds(artifacts, merge, coverageRecords = []) {
 
 function waveStatus(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
-  let rankedAttackSurface = null;
-  try { rankedAttackSurface = rankAttackSurfaces(domain, { write: false }); } catch {}
   const findings = readFindingsFromJsonl(domain);
   const summary = summarizeFindings(findings);
 
-  // Compute surface coverage for deterministic wave decisions
+  // Compute transition-gate inputs for deterministic wave decisions.
   let coverage = null;
+  let transitionBlockers = [];
   try {
     const { state } = readSessionStateStrict(domain);
-    const attackSurface = readAttackSurfaceStrict(domain);
-    const surfaces = rankedAttackSurface?.surfaces || attackSurface.document.surfaces;
-    const exploredSet = new Set(state.explored);
-    const nonLowSurfaces = surfaces.filter(
-      (s) => s.priority && s.priority.toUpperCase() !== "LOW",
-    );
-    const totalNonLow = nonLowSurfaces.length;
-    const exploredNonLow = nonLowSurfaces.filter((s) => exploredSet.has(s.id)).length;
-    coverage = {
-      total_surfaces: surfaces.length,
-      non_low_total: totalNonLow,
-      non_low_explored: exploredNonLow,
-      coverage_pct: totalNonLow > 0 ? Math.round((exploredNonLow / totalNonLow) * 100) : 100,
-      unexplored_high: surfaces.filter(
-        (s) => ["CRITICAL", "HIGH"].includes((s.priority || "").toUpperCase()) && !exploredSet.has(s.id),
-      ).length,
-    };
-  } catch {}
+    const gate = computeHuntToChainGate(domain, state);
+    coverage = gate.coverage;
+    transitionBlockers = gate.transition_blockers;
+  } catch (error) {
+    transitionBlockers = [{
+      code: "state_unavailable",
+      message: "session state could not be read for HUNT -> CHAIN gating",
+      error: error && error.message ? error.message : String(error),
+    }];
+  }
 
   let auditSummary = null;
   let trafficSummary = null;
@@ -658,6 +651,7 @@ function waveStatus(args) {
   return JSON.stringify({
     ...summary,
     coverage,
+    transition_blockers: transitionBlockers,
     http_audit: auditSummary,
     traffic: trafficSummary,
     circuit_breaker: circuitBreakerSummary,
@@ -775,6 +769,15 @@ function applyWaveMerge(args) {
   const domain = assertNonEmptyString(args.target_domain, "target_domain");
   const waveNumber = parseWaveNumber(args.wave_number);
   const forceMerge = assertBoolean(args.force_merge, "force_merge");
+  const forceMergeReason = args.force_merge_reason == null
+    ? null
+    : assertNonEmptyString(args.force_merge_reason, "force_merge_reason");
+  if (forceMerge && (!forceMergeReason || forceMergeReason.length < 20)) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "force_merge_reason is required when force_merge is true and must be at least 20 characters");
+  }
+  if (!forceMerge && forceMergeReason != null) {
+    throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "force_merge_reason is only allowed when force_merge is true");
+  }
 
   return withSessionLock(domain, () => {
     const { raw, state } = readSessionStateStrict(domain);
@@ -855,6 +858,8 @@ function applyWaveMerge(args) {
     safeAppendPipelineEventDirect(domain, "wave_merged", {
       phase: state.phase,
       wave_number: waveNumber,
+      force_merge: forceMerge,
+      force_merge_reason: forceMergeReason,
       status: "merged",
       source: "bounty_apply_wave_merge",
       counts: {
@@ -873,6 +878,7 @@ function applyWaveMerge(args) {
       status: "merged",
       wave_number: waveNumber,
       force_merge: forceMerge,
+      force_merge_reason: forceMergeReason,
       readiness,
       merge: {
         received_agents: merge.received_agents,

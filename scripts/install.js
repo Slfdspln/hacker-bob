@@ -128,6 +128,27 @@ function copyFile(source, destination, mode) {
   if (mode != null) fs.chmodSync(destination, mode);
 }
 
+function copyDirRecursive(sourceDir, destinationDir, predicate) {
+  fs.mkdirSync(destinationDir, { recursive: true });
+  const copied = [];
+  for (const name of fs.readdirSync(sourceDir).sort()) {
+    const source = path.join(sourceDir, name);
+    const destination = path.join(destinationDir, name);
+    const stat = fs.statSync(source);
+    if (stat.isDirectory()) {
+      if (name === "node_modules") continue;
+      copied.push(...copyDirRecursive(source, destination, predicate));
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    const relative = path.relative(sourceDir, source);
+    if (predicate && !predicate(relative, name)) continue;
+    copyFile(source, destination);
+    copied.push(path.relative(destinationDir, destination));
+  }
+  return copied;
+}
+
 function copyDirFiles(sourceDir, destinationDir, predicate) {
   fs.mkdirSync(destinationDir, { recursive: true });
   const copied = [];
@@ -264,6 +285,19 @@ function installProject(projectDir, options = {}) {
   if (path.resolve(sourceToolsDir) !== path.resolve(targetToolsDir)) {
     fs.rmSync(targetToolsDir, { recursive: true, force: true });
     copyDirFiles(sourceToolsDir, targetToolsDir, (name) => name.endsWith(".js"));
+  }
+
+  // Policy-replay diagnostic harness (v1.1.3+). Adapter-agnostic; lives at
+  // testing/policy-replay/ in the target. /bob-debug shells out here when
+  // diagnosing refusal regressions. Skip node_modules to avoid bloat.
+  const sourcePolicyReplayDir = path.join(sourceRoot, "testing", "policy-replay");
+  const targetPolicyReplayDir = path.join(targetAbs, "testing", "policy-replay");
+  if (fs.existsSync(sourcePolicyReplayDir) && path.resolve(sourcePolicyReplayDir) !== path.resolve(targetPolicyReplayDir)) {
+    copyDirRecursive(
+      sourcePolicyReplayDir,
+      targetPolicyReplayDir,
+      (relative) => /\.(?:mjs|md|json)$/.test(relative) && !relative.split(path.sep).includes("node_modules"),
+    );
   }
 
   const serverPath = path.join(targetAbs, "mcp", "server.js");

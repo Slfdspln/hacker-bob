@@ -37,6 +37,10 @@ const AGENT_TOOL_SPECS = Object.freeze({
     roleBundles: ["verifier"],
     extras: ["Bash"],
   },
+  "evidence-agent.md": {
+    roleBundles: ["evidence"],
+    extras: [],
+  },
   "grader.md": {
     roleId: "grader",
     roleBundles: ["grader"],
@@ -45,7 +49,7 @@ const AGENT_TOOL_SPECS = Object.freeze({
   "chain-builder.md": {
     roleId: "chain",
     roleBundles: ["chain"],
-    extras: ["Write"],
+    extras: [],
   },
   "report-writer.md": {
     roleId: "reporter",

@@ -62,6 +62,10 @@ function coverageJsonlPath(domain) {
   return path.join(sessionDir(domain), "coverage.jsonl");
 }
 
+function chainAttemptsJsonlPath(domain) {
+  return path.join(sessionDir(domain), "chain-attempts.jsonl");
+}
+
 function pipelineEventsJsonlPath(domain) {
   return path.join(sessionDir(domain), "pipeline-events.jsonl");
 }
@@ -125,6 +129,14 @@ function gradeArtifactPaths(domain) {
   };
 }
 
+function evidencePackPaths(domain) {
+  const dir = sessionDir(domain);
+  return {
+    json: path.join(dir, "evidence-packs.json"),
+    markdown: path.join(dir, "evidence-packs.md"),
+  };
+}
+
 function reportMarkdownPath(domain) {
   return path.join(sessionDir(domain), "report.md");
 }
@@ -134,7 +146,9 @@ module.exports = {
   assertStaticArtifactId,
   attackSurfacePath,
   bobSpecPath,
+  chainAttemptsJsonlPath,
   coverageJsonlPath,
+  evidencePackPaths,
   findingsJsonlPath,
   findingsMarkdownPath,
   gradeArtifactPaths,

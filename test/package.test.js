@@ -69,10 +69,17 @@ test("npm package contains runtime surfaces and excludes test/cache artifacts", 
       assert.ok(files.has(expected), `${expected} missing from npm pack output`);
     }
 
-    assert.ok(pack.size < 1500000, `npm pack size ${pack.size} exceeds 1.5 MB threshold`);
+    assert.ok(pack.size < 1700000, `npm pack size ${pack.size} exceeds 1.7 MB threshold`);
 
     for (const file of files) {
       assert.ok(!file.startsWith("test/"), `${file} should not be packed`);
+      if (file.startsWith("testing/")) {
+        assert.ok(
+          file.startsWith("testing/policy-replay/"),
+          `${file} should not be packed`,
+        );
+        assert.ok(!file.includes("node_modules"), `${file} should not include node_modules`);
+      }
       assert.ok(!file.startsWith(".github/"), `${file} should not be packed`);
       assert.ok(!file.startsWith("packages/"), `${file} should not be packed in canonical package`);
       assert.notEqual(file, ".claude/hooks/bob-update-lib.js", "hook-local update library should not be packed");

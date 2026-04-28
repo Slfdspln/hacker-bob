@@ -26,6 +26,8 @@ const BASE_PERMISSIONS = Object.freeze([
   "Grep",
 ]);
 
+const PROJECT_DIR_EXPR = "${CLAUDE_PROJECT_DIR:-$PWD}";
+
 function mcpPermissionForTool(toolName) {
   return `mcp__bountyagent__${toolName}`;
 }
@@ -70,7 +72,7 @@ function scopeMcpHookMatcher(toolName) {
     matcher: mcpPermissionForTool(toolName),
     hooks: [{
       type: "command",
-      command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"",
+      command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/scope-guard-mcp.sh"`,
       timeout: 5,
     }],
   };
@@ -87,12 +89,12 @@ function defaultPreToolUseHooks() {
       hooks: [
         {
           type: "command",
-          command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard.sh\"",
+          command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/scope-guard.sh"`,
           timeout: 5,
         },
         {
           type: "command",
-          command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-write-guard.sh\"",
+          command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/session-write-guard.sh"`,
           timeout: 5,
         },
       ],
@@ -102,7 +104,7 @@ function defaultPreToolUseHooks() {
       hooks: [
         {
           type: "command",
-          command: "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-write-guard.sh\"",
+          command: `bash "${PROJECT_DIR_EXPR}/.claude/hooks/session-write-guard.sh"`,
           timeout: 5,
         },
       ],
@@ -118,7 +120,7 @@ function defaultSubagentStopHooks() {
       hooks: [
         {
           type: "command",
-          command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/hunter-subagent-stop.js\"",
+          command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/hunter-subagent-stop.js"`,
           timeout: 10,
         },
       ],
@@ -133,7 +135,7 @@ function defaultSessionStartHooks() {
       hooks: [
         {
           type: "command",
-          command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bob-check-update.js\" \"$CLAUDE_PROJECT_DIR\"",
+          command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/bob-check-update.js" "${PROJECT_DIR_EXPR}"`,
           timeout: 2,
         },
       ],
@@ -164,7 +166,7 @@ function defaultClaudeSettings() {
     },
     statusLine: {
       type: "command",
-      command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bounty-statusline.js\"",
+      command: `node "${PROJECT_DIR_EXPR}/.claude/hooks/bounty-statusline.js"`,
     },
   };
 }

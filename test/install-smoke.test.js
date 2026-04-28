@@ -30,7 +30,9 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "redaction.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "dispatch.js")));
     assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "tools", "index.js")));
+    assert.ok(fs.existsSync(path.join(workspace, "mcp", "lib", "egress-profiles.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "status.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "debug.md")));
@@ -44,6 +46,7 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentstatus", "SKILL.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bountyagentdebug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "hunter-subagent-stop.js")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-update-lib.js")));
@@ -52,6 +55,10 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".hacker-bob", "bypass-tables", "rest-api.txt")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "knowledge")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "bypass-tables")));
+    assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "replay.mjs")));
+    assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "tune.mjs")));
+    assert.ok(fs.existsSync(path.join(workspace, "testing", "policy-replay", "cases", "sample-hunter-refusal.json")));
+    assert.ok(!fs.existsSync(path.join(workspace, "testing", "policy-replay", "node_modules")));
     assert.equal(fs.readFileSync(path.join(workspace, ".hacker-bob", "VERSION"), "utf8").trim(), PACKAGE_VERSION);
     const neutralInstallMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.equal(neutralInstallMeta.schema_version, 2);
@@ -60,6 +67,13 @@ test("installer copies a require-able complete MCP runtime", () => {
     assert.equal(neutralInstallMeta.install_target, workspace);
     assert.deepEqual(neutralInstallMeta.installed_adapters, ["claude"]);
     assert.equal(fs.readFileSync(path.join(workspace, ".claude", "bob", "VERSION"), "utf8").trim(), PACKAGE_VERSION);
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.example.json")));
+    const egressConfig = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "bob", "egress-profiles.json"), "utf8"));
+    assert.equal(egressConfig.profiles.find((profile) => profile.name === "default").proxy_url, null);
+    const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
+    const settingsText = JSON.stringify(settings);
+    assert.match(settingsText, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
+    assert.doesNotMatch(settingsText, /\$CLAUDE_PROJECT_DIR(?!:-)/);
     const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "bob", "install.json"), "utf8"));
     assert.equal(installMeta.schema_version, 1);
     assert.equal(installMeta.bob_version, PACKAGE_VERSION);
@@ -70,11 +84,13 @@ test("installer copies a require-able complete MCP runtime", () => {
       "-e",
       [
         "const server = require(process.argv[1]);",
-        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 57) process.exit(2);",
+        "if (!Array.isArray(server.TOOLS) || server.TOOLS.length !== 61) process.exit(2);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_list_auth_profiles')) process.exit(3);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_tool_telemetry')) process.exit(6);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_pipeline_analytics')) process.exit(7);",
         "if (!server.TOOLS.some((tool) => tool.name === 'bounty_finalize_hunter_run')) process.exit(8);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_write_evidence_packs')) process.exit(9);",
+        "if (!server.TOOLS.some((tool) => tool.name === 'bounty_read_evidence_packs')) process.exit(10);",
         "Promise.resolve(server.executeTool('bounty_list_auth_profiles', { target_domain: 'example.com' }))",
         "  .then((result) => { if (!result.ok || result.data.target_domain !== 'example.com') process.exit(4); })",
         "  .catch(() => process.exit(5));",
@@ -182,7 +198,10 @@ test("installer merges existing MCP/settings config idempotently", () => {
       hooks: {
         SessionStart: [{
           matcher: "startup",
-          hooks: [{ type: "command", command: "echo existing session", timeout: 1 }],
+          hooks: [
+            { type: "command", command: "echo existing session", timeout: 1 },
+            { type: "command", command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bob-check-update.js\" \"$CLAUDE_PROJECT_DIR\"", timeout: 2 },
+          ],
         }],
         PreToolUse: [{
           matcher: "Bash",
@@ -193,6 +212,10 @@ test("installer merges existing MCP/settings config idempotently", () => {
           hooks: [{ type: "command", command: "echo existing stop", timeout: 1 }],
         }],
       },
+      statusLine: {
+        type: "command",
+        command: "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bounty-statusline.js\"",
+      },
       customSetting: true,
     }, null, 2)}\n`);
 
@@ -202,6 +225,15 @@ test("installer merges existing MCP/settings config idempotently", () => {
         env: { ...process.env, HOME: tempHome },
         stdio: "pipe",
       });
+      if (index === 0) {
+        fs.writeFileSync(path.join(workspace, ".claude", "bob", "egress-profiles.json"), `${JSON.stringify({
+          version: 1,
+          profiles: [
+            { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
+            { name: "operator", proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}", region: "EU", description: "Operator-owned", enabled: true },
+          ],
+        }, null, 2)}\n`);
+      }
     }
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
@@ -210,12 +242,16 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.equal(Object.keys(mcp.mcpServers).filter((name) => name === "bountyagent").length, 1);
 
     const settings = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "settings.json"), "utf8"));
+    const settingsText = JSON.stringify(settings);
+    assert.match(settingsText, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
+    assert.doesNotMatch(settingsText, /\$CLAUDE_PROJECT_DIR(?!:-)/);
     assert.equal(settings.customSetting, true);
     assert.equal(settings.permissions.allow.length, new Set(settings.permissions.allow).size);
     assert.ok(settings.permissions.allow.includes("custom-tool"));
     assert.ok(settings.permissions.allow.includes("mcp__bountyagent__custom_user_tool"));
     assert.ok(settings.permissions.allow.includes("mcp__bountyagent__bounty_http_scan"));
     assert.ok(!settings.permissions.allow.includes("mcp__bountyagent__bounty_merge_wave_handoffs"));
+    assert.match(settings.statusLine.command, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
 
     const bashEntry = settings.hooks.PreToolUse.find((entry) => entry.matcher === "Bash");
     assert.ok(bashEntry);
@@ -260,6 +296,9 @@ test("installer merges existing MCP/settings config idempotently", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "skills", "bob-debug", "SKILL.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "knowledge", "custom.json")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bypass-tables", "custom.txt")));
+    assert.match(sessionEntry.hooks.find((hook) => /bob-check-update\.js/.test(hook.command)).command, /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
+    const egressConfig = JSON.parse(fs.readFileSync(path.join(workspace, ".claude", "bob", "egress-profiles.json"), "utf8"));
+    assert.ok(egressConfig.profiles.some((profile) => profile.name === "operator"));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });

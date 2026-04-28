@@ -171,6 +171,15 @@ function telemetryInput(evaluation, {
 }
 
 function recordHunterCompletionTelemetry(evaluation, options = {}) {
+  // Evidence-mode input is already a fully-formed telemetry record (the hook
+  // builds it directly because evidence runs have no wave/agent and skip the
+  // structured-handoff evaluation path). Detect that shape by the runType
+  // field and pass it through to the recorders unchanged.
+  if (evaluation && evaluation.runType === "evidence") {
+    safeRecordAgentRunTelemetry(evaluation);
+    safeRecordHunterStoppedPipelineEvent(evaluation);
+    return evaluation;
+  }
   const input = telemetryInput(evaluation, options);
   safeRecordAgentRunTelemetry(input);
   safeRecordHunterStoppedPipelineEvent(input);

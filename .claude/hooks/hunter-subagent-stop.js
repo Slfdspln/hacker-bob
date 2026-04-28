@@ -5,6 +5,20 @@ const fs = require("fs");
 const path = require("path");
 
 const MARKER = "BOB_HUNTER_DONE";
+const EVIDENCE_MODE = "evidence";
+
+function cleanString(value) {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function markerMode(marker) {
+  return cleanString(marker?.mode);
+}
+
+function isEvidenceMarker(marker) {
+  return markerMode(marker) === EVIDENCE_MODE;
+}
 
 function readStdin() {
   return fs.readFileSync(0, "utf8");
@@ -95,6 +109,21 @@ function recordHunterCompletionTelemetry(input) {
 }
 
 function markerValidationError(marker) {
+  if (isEvidenceMarker(marker)) {
+    if (!cleanString(marker.target_domain)) {
+      return {
+        block_code: "malformed_marker",
+        reason: "Post-report evidence marker is missing required field: target_domain",
+      };
+    }
+    if (cleanString(marker.wave) || cleanString(marker.agent)) {
+      return {
+        block_code: "malformed_marker",
+        reason: "Post-report evidence marker must not include wave or agent; use the normal wave marker for EXPLORE hunters.",
+      };
+    }
+    return null;
+  }
   const missing = ["target_domain", "wave", "agent", "surface_id"].filter((field) => {
     return typeof marker[field] !== "string" || marker[field].trim() === "";
   });
@@ -117,6 +146,68 @@ function markerValidationError(marker) {
     };
   }
   return null;
+}
+
+function inspectEvidenceRun(marker) {
+  // Post-report evidence runs are only allowed in REPORT or EXPLORE phase. We
+  // read state.json directly from disk because the hook should not depend on
+  // the full MCP server (the hook may run in environments with stale or
+  // out-of-process server state).
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (!home) {
+    return {
+      ok: false,
+      block_code: "evidence_state_unreadable",
+      reason: "Post-report evidence marker could not resolve $HOME for session state read.",
+    };
+  }
+  const sessionDir = path.join(home, "bounty-agent-sessions", marker.target_domain);
+  const statePath = path.join(sessionDir, "state.json");
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  } catch (error) {
+    return {
+      ok: false,
+      block_code: "evidence_state_unreadable",
+      reason: `Post-report evidence marker could not read session state: ${error.message || String(error)}`,
+    };
+  }
+  if (!state || (state.phase !== "REPORT" && state.phase !== "EXPLORE")) {
+    return {
+      ok: false,
+      block_code: "evidence_phase_mismatch",
+      reason: `Post-report evidence marker is allowed only in REPORT or EXPLORE phase; current phase is ${state && state.phase ? state.phase : "unknown"}.`,
+    };
+  }
+  return {
+    ok: true,
+    handoff: {
+      present: false,
+      valid: true,
+      provenance: "post_report_evidence",
+      surface_status: "evidence",
+      summary_present: cleanString(marker.summary) !== "",
+      chain_notes_count: 0,
+    },
+  };
+}
+
+function evidenceTelemetryInput({ payload, marker, now, status, block_code = null, handoff = null }) {
+  return {
+    ok: status === "allowed",
+    runType: EVIDENCE_MODE,
+    status,
+    block_code,
+    target_domain: marker?.target_domain || null,
+    wave: null,
+    agent: null,
+    surface_id: cleanString(marker?.surface_id) || null,
+    transcript_path: transcriptPathFromPayload(payload),
+    handoff,
+    telemetry_source: "hunter-evidence-stop",
+    now,
+  };
 }
 
 function transcriptPathFromPayload(payload) {
@@ -186,13 +277,31 @@ function main() {
 
   const markerError = markerValidationError(marker);
   if (markerError) {
-    block(markerError.reason, markerTelemetryInput({
-      payload,
-      marker,
-      now,
-      status: "blocked",
-      block_code: markerError.block_code,
+    if (isEvidenceMarker(marker)) {
+      block(markerError.reason, evidenceTelemetryInput({
+        payload, marker, now, status: "blocked", block_code: markerError.block_code,
+      }));
+    } else {
+      block(markerError.reason, markerTelemetryInput({
+        payload, marker, now, status: "blocked", block_code: markerError.block_code,
+      }));
+    }
+  }
+
+  if (isEvidenceMarker(marker)) {
+    const evidenceResult = inspectEvidenceRun(marker);
+    if (!evidenceResult.ok) {
+      block(evidenceResult.reason, evidenceTelemetryInput({
+        payload, marker, now, status: "blocked",
+        block_code: evidenceResult.block_code,
+      }));
+    }
+    recordHunterCompletionTelemetry(evidenceTelemetryInput({
+      payload, marker, now, status: "allowed",
+      handoff: evidenceResult.handoff,
     }));
+    console.log(JSON.stringify({ ok: true, message: "post-report evidence run accepted" }));
+    process.exit(0);
   }
 
   const finalization = finalizeMarker(marker, payload, now);

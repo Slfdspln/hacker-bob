@@ -63,7 +63,7 @@ npx -y hacker-bob@latest install /path/to/your/project --adapter all
 
 The Claude adapter writes `.claude/` commands, skills, agents, hooks, statusline, and settings. The Codex adapter installs direct `$bob-*` skills into `~/.codex/skills`, writes a local `.codex/plugins/hacker-bob` plugin for MCP wiring and command wrappers, writes a repo-local `.agents/plugins/marketplace.json` entry, and activates the plugin in Codex's cache/config for MCP discovery. The generic MCP adapter writes root `.mcp.json` plus prompt docs under `.hacker-bob/generic-mcp/`.
 
-Run installs as many times as you like. They are idempotent and preserve unrelated host config.
+Run installs as many times as you like. They are idempotent and preserve unrelated host config. Bob is polite about other people's settings.
 
 If you prefer a global command, install the CLI once:
 
@@ -142,11 +142,11 @@ RECON → AUTH → HUNT → CHAIN → VERIFY → GRADE → REPORT
 2. **AUTH** — Bob tries to sign up. If he can, he keeps a victim and an attacker account in his pocket. If he can't, he shrugs and hunts unauthenticated.
 3. **HUNT** — Parallel hunter agents fan out, one per attack surface. They are not gentle.
 4. **CHAIN** — Bob squints at the findings and asks "wait, can I combine these into something worse?"
-5. **VERIFY** — Three rounds of arguing with himself: skeptical Bob, balanced Bob, and final-PoC Bob. Most "bugs" do not survive.
-6. **GRADE** — 5-axis scoring. Bob decides: SUBMIT, HOLD, or "this is not a bug, please stop."
+5. **VERIFY** — Three rounds of arguing with himself: skeptical Bob, balanced Bob, and final-PoC Bob. Most "bugs" do not survive. After final verification, Bob collects bounded evidence packs for every final reportable finding.
+6. **GRADE** — 5-axis scoring. Bob decides: SUBMIT, HOLD, or "this is not a bug, please stop." Valid evidence packs are required before grading or reporting when final reportable findings exist.
 7. **REPORT** — A clean, submission-ready writeup with PoCs and evidence. No "could potentially". No "an attacker may". Just receipts.
 
-MCP ranking computes runtime priority for status views and hunter briefs. Imports and public-intel fetches do not rewrite `attack_surface.json`.
+MCP ranking computes runtime priority for status views and hunter briefs. `/bob-status` also shows evidence readiness so missing or invalid evidence packs are visible before grade/report work. Imports and public-intel fetches do not rewrite `attack_surface.json`.
 
 ## Requirements
 

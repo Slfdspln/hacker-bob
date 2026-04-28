@@ -3,6 +3,8 @@
 const fs = require("fs");
 const path = require("path");
 const {
+  CHAIN_ATTEMPT_OUTCOME_VALUES,
+  CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES,
   COVERAGE_STATUS_VALUES,
   GRADE_VERDICT_VALUES,
   PHASE_VALUES,
@@ -11,14 +13,18 @@ const {
 } = require("./constants.js");
 const {
   assertNonEmptyString,
+  normalizeStringArray,
   parseAgentId,
   parseWaveId,
 } = require("./validation.js");
 const {
   attackSurfacePath,
+  chainAttemptsJsonlPath,
   coverageJsonlPath,
+  evidencePackPaths,
   findingsJsonlPath,
   gradeArtifactPaths,
+  httpAuditJsonlPath,
   pipelineEventsJsonlPath,
   reportMarkdownPath,
   sessionDir,
@@ -39,6 +45,14 @@ const {
   readToolTelemetryEvents,
   summarizeToolTelemetryEvents,
 } = require("./tool-telemetry.js");
+const {
+  requireValidEvidencePacksForFinalReportableFindings,
+} = require("./evidence.js");
+const {
+  buildCircuitBreakerSummary,
+  readHttpAuditRecordsFromJsonl,
+  summarizeHttpAuditRecords,
+} = require("./http-records.js");
 
 const PIPELINE_ANALYTICS_VERSION = 1;
 const PIPELINE_EVENT_VERSION = 1;
@@ -60,6 +74,7 @@ const PIPELINE_EVENT_TYPES = Object.freeze([
   "coverage_logged",
   "finding_recorded",
   "verification_written",
+  "evidence_written",
   "grade_written",
 ]);
 
@@ -76,6 +91,10 @@ function capString(value, maxChars = 200) {
   const text = String(value).replace(/[\r\n\t]+/g, " ").trim();
   if (!text) return null;
   return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
+function compactErrorMessage(error) {
+  return error && error.message ? error.message : String(error);
 }
 
 function normalizeIsoTimestamp(value, fallback = new Date()) {
@@ -174,6 +193,12 @@ function normalizePipelineEvent(targetDomain, type, fields = {}) {
   if (blockCode) event.block_code = blockCode;
   if (counts) event.counts = counts;
   if (source) event.source = source;
+  if (typeof fields.force_merge === "boolean") event.force_merge = fields.force_merge;
+  const forceMergeReason = capString(fields.force_merge_reason, 1000);
+  if (forceMergeReason) event.force_merge_reason = forceMergeReason;
+  if (typeof fields.override === "boolean") event.override = fields.override;
+  const overrideReason = capString(fields.override_reason, 1000);
+  if (overrideReason) event.override_reason = overrideReason;
 
   return event;
 }
@@ -293,6 +318,12 @@ function normalizePipelineEventForRead(record, expectedDomain) {
   if (waveNumber != null) event.wave_number = waveNumber;
   const counts = normalizeCounts(record.counts);
   if (counts) event.counts = counts;
+  if (typeof record.force_merge === "boolean") event.force_merge = record.force_merge;
+  const forceMergeReason = capString(record.force_merge_reason, 1000);
+  if (forceMergeReason) event.force_merge_reason = forceMergeReason;
+  if (typeof record.override === "boolean") event.override = record.override;
+  const overrideReason = capString(record.override_reason, 1000);
+  if (overrideReason) event.override_reason = overrideReason;
   return event;
 }
 
@@ -437,10 +468,128 @@ function summarizeCoverageJsonl(targetDomain) {
   };
 }
 
+function summarizeChainAttemptsJsonl(targetDomain) {
+  const read = readJsonlSafe(chainAttemptsJsonlPath(targetDomain), "chain-attempts.jsonl");
+  const byOutcome = CHAIN_ATTEMPT_OUTCOME_VALUES.reduce((result, outcome) => {
+    result[outcome] = 0;
+    return result;
+  }, {});
+  let total = 0;
+  let terminalTotal = 0;
+  let invalidRecords = 0;
+
+  for (const record of read.records) {
+    const outcome = capString(record.outcome, 40);
+    if (record.target_domain !== targetDomain || !CHAIN_ATTEMPT_OUTCOME_VALUES.includes(outcome)) {
+      invalidRecords += 1;
+      continue;
+    }
+    total += 1;
+    byOutcome[outcome] += 1;
+    if (CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES.includes(outcome)) {
+      terminalTotal += 1;
+    }
+  }
+
+  return {
+    exists: read.exists,
+    total,
+    terminal_total: terminalTotal,
+    by_outcome: byOutcome,
+    malformed_lines: read.malformed_lines + invalidRecords,
+    error: read.error,
+    mtime: read.mtime,
+  };
+}
+
+function summarizeHttpAuditJsonl(targetDomain) {
+  const filePath = httpAuditJsonlPath(targetDomain);
+  const summary = {
+    exists: fs.existsSync(filePath),
+    total: 0,
+    errors: 0,
+    scope_blocked: 0,
+    network_unreachable_target: 0,
+    egress: { by_profile: {}, by_region: {} },
+    geofence_warning: {
+      threshold: 3,
+      warning: false,
+      code: null,
+      note: null,
+      hosts: [],
+    },
+    circuit_breaker_summary: buildCircuitBreakerSummary([]),
+    error: null,
+    mtime: fileMtimeIso(filePath),
+  };
+  if (!summary.exists) return summary;
+  try {
+    const records = readHttpAuditRecordsFromJsonl(targetDomain);
+    const auditSummary = summarizeHttpAuditRecords(records, { targetDomain });
+    summary.total = auditSummary.total;
+    summary.errors = auditSummary.errors;
+    summary.scope_blocked = auditSummary.scope_blocked;
+    summary.network_unreachable_target = auditSummary.network_unreachable_target;
+    summary.egress = auditSummary.egress;
+    summary.geofence_warning = auditSummary.geofence_warning;
+    summary.circuit_breaker_summary = buildCircuitBreakerSummary(records);
+  } catch (error) {
+    summary.error = `Malformed http-audit.jsonl: ${error.message || String(error)}`;
+  }
+  return summary;
+}
+
+function summarizeStructuredHandoffChainNotes(targetDomain) {
+  const dir = sessionDir(targetDomain);
+  const summary = {
+    chain_notes_count: 0,
+    handoff_count: 0,
+    handoff_refs: [],
+    malformed_files: 0,
+  };
+  if (!fs.existsSync(dir)) return summary;
+
+  for (const fileName of fs.readdirSync(dir).sort()) {
+    const match = fileName.match(/^handoff-(w[1-9][0-9]*)-(a[1-9][0-9]*)\.json$/);
+    if (!match) continue;
+    let document;
+    try {
+      document = readJsonFile(path.join(dir, fileName));
+    } catch {
+      summary.malformed_files += 1;
+      continue;
+    }
+    if (!isPlainObject(document)) {
+      summary.malformed_files += 1;
+      continue;
+    }
+    if (document.target_domain != null && document.target_domain !== targetDomain) continue;
+    let chainNotes;
+    try {
+      chainNotes = normalizeStringArray(document.chain_notes, "chain_notes");
+    } catch {
+      summary.malformed_files += 1;
+      continue;
+    }
+    if (chainNotes.length === 0) continue;
+    summary.handoff_count += 1;
+    summary.chain_notes_count += chainNotes.length;
+    summary.handoff_refs.push({
+      wave: match[1],
+      agent: match[2],
+      surface_id: capString(document.surface_id, 200),
+      chain_notes_count: chainNotes.length,
+    });
+  }
+
+  return summary;
+}
+
 function summarizeVerificationArtifacts(targetDomain) {
   const rounds = {};
   let latestMtime = null;
   const errors = [];
+  let finalReportableIds = [];
   for (const round of VERIFICATION_ROUND_VALUES) {
     const paths = verificationRoundPaths(targetDomain, round);
     const read = readJsonSafe(paths.json, `${round} verification round JSON`);
@@ -460,6 +609,11 @@ function summarizeVerificationArtifacts(targetDomain) {
       summary.results_count = read.document.results.length;
       summary.reportable_count = read.document.results.filter((result) => result && result.reportable === true).length;
       summary.confirmed_count = read.document.results.filter((result) => result && result.disposition === "confirmed").length;
+      if (round === "final") {
+        finalReportableIds = read.document.results
+          .filter((result) => result && result.reportable === true && typeof result.finding_id === "string")
+          .map((result) => result.finding_id);
+      }
       if (!summary.valid) {
         summary.error = `${round} verification artifact metadata mismatch`;
         errors.push(summary.error);
@@ -471,9 +625,87 @@ function summarizeVerificationArtifacts(targetDomain) {
     rounds,
     final_results_count: rounds.final.results_count,
     final_reportable_count: rounds.final.reportable_count,
+    final_reportable_ids: finalReportableIds,
     errors,
     latest_mtime: latestMtime,
   };
+}
+
+function summarizeEvidenceArtifacts(targetDomain, finalReportableIds) {
+  const paths = evidencePackPaths(targetDomain);
+  const read = readJsonSafe(paths.json, "evidence packs JSON");
+  const finalReportableSet = new Set(finalReportableIds);
+  const summary = {
+    exists: read.exists,
+    valid: false,
+    skipped: finalReportableIds.length === 0 && !read.exists,
+    packs_count: 0,
+    representative_samples_count: 0,
+    reportable_findings_covered: 0,
+    final_reportable_count: finalReportableIds.length,
+    missing_finding_ids: finalReportableIds.slice(),
+    duplicate_finding_ids: [],
+    extra_finding_ids: [],
+    error: read.error,
+    mtime: read.mtime,
+  };
+
+  if (finalReportableIds.length === 0 && !read.exists) {
+    summary.valid = true;
+    return summary;
+  }
+
+  if (isPlainObject(read.document) && Array.isArray(read.document.packs)) {
+    if (read.document.version !== 1 || read.document.target_domain !== targetDomain) {
+      summary.error = "evidence packs artifact metadata mismatch";
+    }
+
+    const seen = new Set();
+    const duplicateIds = new Set();
+    for (const pack of read.document.packs) {
+      if (!isPlainObject(pack) || typeof pack.finding_id !== "string") {
+        summary.error = summary.error || "evidence packs artifact has malformed pack entries";
+        continue;
+      }
+      summary.packs_count += 1;
+      if (seen.has(pack.finding_id)) {
+        duplicateIds.add(pack.finding_id);
+      }
+      seen.add(pack.finding_id);
+      if (Array.isArray(pack.representative_samples)) {
+        summary.representative_samples_count += pack.representative_samples.length;
+      }
+    }
+
+    summary.duplicate_finding_ids = Array.from(duplicateIds).sort();
+    summary.missing_finding_ids = finalReportableIds.filter((id) => !seen.has(id));
+    summary.extra_finding_ids = Array.from(seen).filter((id) => !finalReportableSet.has(id)).sort();
+    summary.reportable_findings_covered = finalReportableIds.filter((id) => seen.has(id)).length;
+  } else if (read.exists && !read.error) {
+    summary.error = "evidence packs artifact metadata mismatch";
+  }
+
+  try {
+    const validation = requireValidEvidencePacksForFinalReportableFindings(targetDomain);
+    summary.exists = validation.exists;
+    summary.valid = true;
+    summary.skipped = validation.skipped;
+    summary.packs_count = validation.packs_count;
+    summary.representative_samples_count = validation.representative_samples_count;
+    summary.reportable_findings_covered = validation.reportable_findings_covered;
+    summary.final_reportable_count = validation.final_reportable_count;
+    summary.missing_finding_ids = [];
+    summary.duplicate_finding_ids = [];
+    summary.extra_finding_ids = [];
+    summary.error = null;
+  } catch (error) {
+    summary.valid = false;
+    summary.error = compactErrorMessage(error);
+    if (summary.missing_finding_ids.length === 0 && finalReportableIds.length > 0 && summary.reportable_findings_covered < finalReportableIds.length) {
+      summary.missing_finding_ids = finalReportableIds.slice();
+    }
+  }
+  return summary;
 }
 
 function summarizeGradeArtifact(targetDomain) {
@@ -545,8 +777,12 @@ function readSessionArtifactSummary(targetDomain) {
   const waves = waveNumbers.map((waveNumber) => readWaveReadiness(targetDomain, waveNumber));
   const findings = summarizeFindingsJsonl(targetDomain);
   const coverage = summarizeCoverageJsonl(targetDomain);
+  const httpAudit = summarizeHttpAuditJsonl(targetDomain);
+  const chainAttempts = summarizeChainAttemptsJsonl(targetDomain);
+  const chainHandoffs = summarizeStructuredHandoffChainNotes(targetDomain);
   const attackSurfaceCoverage = summarizeAttackSurfaceCoverage(targetDomain, state);
   const verification = summarizeVerificationArtifacts(targetDomain);
+  const evidence = summarizeEvidenceArtifacts(targetDomain, verification.final_reportable_ids);
   const grade = summarizeGradeArtifact(targetDomain);
   const reportPath = reportMarkdownPath(targetDomain);
   const reportMtime = fileMtimeIso(reportPath);
@@ -556,8 +792,11 @@ function readSessionArtifactSummary(targetDomain) {
     stateRead.mtime,
     findings.mtime,
     coverage.mtime,
+    httpAudit.mtime,
+    chainAttempts.mtime,
     attackSurfaceCoverage.mtime,
     verification.latest_mtime,
+    evidence.mtime,
     grade.mtime,
     reportMtime,
   ]) {
@@ -569,12 +808,17 @@ function readSessionArtifactSummary(targetDomain) {
   if (stateRead.error) artifactErrors.push(stateRead.error);
   if (findings.error) artifactErrors.push(findings.error);
   if (coverage.error) artifactErrors.push(coverage.error);
+  if (httpAudit.error) artifactErrors.push(httpAudit.error);
+  if (chainAttempts.error) artifactErrors.push(chainAttempts.error);
   if (findings.malformed_lines > 0) artifactErrors.push(`Malformed findings.jsonl lines: ${findings.malformed_lines}`);
   if (coverage.malformed_lines > 0) artifactErrors.push(`Malformed coverage.jsonl lines: ${coverage.malformed_lines}`);
+  if (chainAttempts.malformed_lines > 0) artifactErrors.push(`Malformed chain-attempts.jsonl lines: ${chainAttempts.malformed_lines}`);
+  if (chainHandoffs.malformed_files > 0) artifactErrors.push(`Malformed chain handoff files: ${chainHandoffs.malformed_files}`);
   for (const wave of waves) {
     if (wave.error) artifactErrors.push(`Wave ${wave.wave_number}: ${wave.error}`);
   }
   artifactErrors.push(...verification.errors);
+  if (evidence.error) artifactErrors.push(evidence.error);
   if (grade.error) artifactErrors.push(grade.error);
 
   return {
@@ -594,8 +838,12 @@ function readSessionArtifactSummary(targetDomain) {
     waves,
     findings,
     coverage,
+    http_audit: httpAudit,
+    chain_attempts: chainAttempts,
+    chain_handoffs: chainHandoffs,
     attack_surface_coverage: attackSurfaceCoverage,
     verification,
+    evidence,
     grade,
     report: {
       present: fs.existsSync(reportPath),
@@ -685,6 +933,18 @@ function buildBackfillEvents(targetDomain, artifacts) {
       source,
     }));
   }
+  if (artifacts.evidence.exists) {
+    events.push(normalizePipelineEvent(targetDomain, "evidence_written", {
+      ts: artifacts.evidence.mtime || ts,
+      status: artifacts.evidence.valid ? "valid" : "invalid",
+      counts: {
+        packs: artifacts.evidence.packs_count,
+        representative_samples: artifacts.evidence.representative_samples_count,
+        reportable_findings_covered: artifacts.evidence.reportable_findings_covered,
+      },
+      source,
+    }));
+  }
   if (artifacts.grade.exists) {
     events.push(normalizePipelineEvent(targetDomain, "grade_written", {
       ts: artifacts.grade.mtime || ts,
@@ -740,7 +1000,7 @@ function compactEvent(event) {
     target_domain: event.target_domain,
     type: event.type,
   };
-  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source"]) {
+  for (const field of ["phase", "from_phase", "to_phase", "wave_number", "agent", "surface_id", "status", "block_code", "counts", "source", "force_merge", "force_merge_reason", "override", "override_reason"]) {
     if (event[field] != null) compact[field] = event[field];
   }
   return compact;
@@ -853,6 +1113,22 @@ function phaseAtLeast(phase, requiredPhase) {
   return current >= 0 && required >= 0 && current >= required;
 }
 
+function computeChainPhaseDurationMs(events) {
+  let chainStartMs = null;
+  for (const event of events) {
+    if (event.type !== "phase_transitioned") continue;
+    if (event.to_phase === "CHAIN") {
+      chainStartMs = timestampMs(event.ts);
+      continue;
+    }
+    if (event.to_phase === "VERIFY" && chainStartMs != null) {
+      const verifyMs = timestampMs(event.ts);
+      return verifyMs >= chainStartMs ? verifyMs - chainStartMs : null;
+    }
+  }
+  return null;
+}
+
 function issue(code, severity, message, evidence = {}) {
   return { code, severity, message, evidence };
 }
@@ -898,6 +1174,19 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
     }));
   }
 
+  if (
+    phaseAtLeast(artifacts.state.phase, "GRADE") &&
+    artifacts.verification.final_reportable_count > 0 &&
+    !artifacts.evidence.valid
+  ) {
+    issues.push(issue("missing_evidence", "blocked", "Session reached GRADE or later without valid evidence packs for final reportable findings.", {
+      phase: artifacts.state.phase,
+      final_reportable: artifacts.verification.final_reportable_count,
+      covered: artifacts.evidence.reportable_findings_covered,
+      missing_finding_ids: artifacts.evidence.missing_finding_ids,
+    }));
+  }
+
   if (phaseAtLeast(artifacts.state.phase, "REPORT") && !artifacts.grade.valid) {
     issues.push(issue("missing_grade", "blocked", "Session reached REPORT without a valid grade artifact.", {
       phase: artifacts.state.phase,
@@ -930,6 +1219,14 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
     }));
   }
 
+  if (artifacts.http_audit.geofence_warning && artifacts.http_audit.geofence_warning.warning) {
+    issues.push(issue("network_unreachable_target", "needs_attention", "Repeated first-party network failures may indicate geofencing or target reachability problems.", {
+      egress: artifacts.http_audit.egress,
+      geofence_warning: artifacts.http_audit.geofence_warning,
+      circuit_breaker: artifacts.http_audit.circuit_breaker_summary,
+    }));
+  }
+
   const coverage = artifacts.attack_surface_coverage;
   if (
     phaseAtLeast(artifacts.state.phase, "CHAIN") &&
@@ -942,6 +1239,20 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
       non_low_explored: coverage.non_low_explored,
       non_low_total: coverage.non_low_total,
       unexplored_high: coverage.unexplored_high,
+    }));
+  }
+
+  const chainWorkRequired = artifacts.findings.total >= 2 || artifacts.chain_handoffs.chain_notes_count > 0;
+  if (
+    phaseAtLeast(artifacts.state.phase, "CHAIN") &&
+    chainWorkRequired &&
+    artifacts.chain_attempts.terminal_total === 0
+  ) {
+    issues.push(issue("chain_phase_no_attempts", "blocked", "CHAIN phase has required chain work but no terminal structured chain attempts.", {
+      findings: artifacts.findings.total,
+      handoff_chain_notes: artifacts.chain_handoffs.chain_notes_count,
+      attempts: artifacts.chain_attempts.total,
+      by_outcome: artifacts.chain_attempts.by_outcome,
     }));
   }
 
@@ -993,8 +1304,27 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
       total: artifacts.findings.total,
       by_severity: artifacts.findings.by_severity,
     },
+    chain_attempts_count: artifacts.chain_attempts.total,
+    chain_attempts_by_outcome: artifacts.chain_attempts.by_outcome,
+    chain_phase_duration_ms: computeChainPhaseDurationMs(allEvents),
     final_verification_count: artifacts.verification.final_results_count,
     final_reportable_count: artifacts.verification.final_reportable_count,
+    evidence: {
+      exists: artifacts.evidence.exists,
+      valid: artifacts.evidence.valid,
+      packs_count: artifacts.evidence.packs_count,
+      representative_samples_count: artifacts.evidence.representative_samples_count,
+      reportable_findings_covered: artifacts.evidence.reportable_findings_covered,
+      missing_finding_ids: artifacts.evidence.missing_finding_ids,
+    },
+    egress: artifacts.http_audit.egress,
+    geofence_warnings: artifacts.http_audit.geofence_warning,
+    http_audit: {
+      total: artifacts.http_audit.total,
+      errors: artifacts.http_audit.errors,
+      scope_blocked: artifacts.http_audit.scope_blocked,
+      network_unreachable_target: artifacts.http_audit.network_unreachable_target,
+    },
     grade_verdict: artifacts.grade.verdict,
     report_present: artifacts.report.present,
     latest_event: compactEvent(latest),
@@ -1103,11 +1433,14 @@ function actionForBottleneck(bottleneck) {
     hunter_handoff_failures: "Resume the pending wave after missing hunters write valid structured handoffs, or force-merge intentionally.",
     repeated_hunter_stops: "Fix the hunter final-marker or handoff path that is repeatedly blocking SubagentStop.",
     mcp_tool_failures: "Inspect failing MCP tools and address the dominant error code before launching more agents.",
+    network_unreachable_target: "Log blocked coverage/dead-end context, then choose an explicit egress profile if the operator approves a regional retry.",
     auth_failures: "Refresh or recapture auth profiles before additional authenticated testing.",
     low_coverage: "Launch another wave for unexplored non-low surfaces before verification.",
+    chain_phase_no_attempts: "Run the chain-builder again so it records terminal chain attempts, or transition with an explicit override reason.",
     verification_dropoff: "Review final verification inputs because recorded findings are not surviving as reportable.",
     grade_hold_skip: "Use grader feedback to decide whether to return to HUNT or stop before report writing.",
     missing_verification: "Write a valid final verification round before grading or reporting.",
+    missing_evidence: "Run the evidence agent and validate evidence packs before grading or reporting.",
     missing_grade: "Write a valid grade verdict before report completion.",
     missing_report: "Write report.md or move the session out of REPORT if report writing is still pending.",
     stale_pending_wave: "Re-enter resume flow for the stale pending wave and reconcile handoffs.",

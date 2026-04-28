@@ -1063,6 +1063,13 @@ function requireFinalReportableSeveritySet(domain, findingIdSet) {
   );
 }
 
+function requireEvidencePacksForGrading(domain, findingIdSet) {
+  const {
+    requireValidEvidencePacksForFinalReportableFindings,
+  } = require("./evidence.js");
+  return requireValidEvidencePacksForFinalReportableFindings(domain, { findingIdSet });
+}
+
 function enforceGradeVerdictConsistency(document, { finalReportableSeveritySet: reportableSet = null } = {}) {
   const maxFindingScore = document.findings.reduce(
     (maxScore, finding) => Math.max(maxScore, finding.total_score),
@@ -1154,6 +1161,7 @@ function writeGradeVerdict(args) {
   enforceGradeVerdictConsistency(document, {
     finalReportableSeveritySet: requireFinalReportableSeveritySet(domain, findingIdSet),
   });
+  requireEvidencePacksForGrading(domain, findingIdSet);
 
   const paths = gradeArtifactPaths(domain);
   writeFileAtomic(paths.json, JSON.stringify(document, null, 2) + "\n");
@@ -1181,10 +1189,12 @@ function readGradeVerdict(args) {
   const paths = gradeArtifactPaths(domain);
   const document = loadJsonDocumentStrict(paths.json, "grade verdict JSON");
   const findingIdSet = new Set(readFindingsFromJsonl(domain).map((finding) => finding.id));
-  return JSON.stringify(normalizeGradeVerdictDocument(document, {
+  const normalized = normalizeGradeVerdictDocument(document, {
     expectedDomain: domain,
     findingIdSet,
-  }));
+  });
+  requireEvidencePacksForGrading(domain, findingIdSet);
+  return JSON.stringify(normalized);
 }
 
 module.exports = {

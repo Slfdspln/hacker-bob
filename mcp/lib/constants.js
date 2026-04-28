@@ -51,6 +51,8 @@ const VERIFICATION_DISPOSITION_VALUES = ["confirmed", "denied", "downgraded"];
 const GRADE_VERDICT_VALUES = ["SUBMIT", "HOLD", "SKIP"];
 const GRADE_HOLD_MIN_SCORE = 20;
 const GRADE_SUBMIT_MIN_SCORE = 40;
+const CHAIN_ATTEMPT_OUTCOME_VALUES = ["confirmed", "denied", "blocked", "inconclusive", "not_applicable"];
+const CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES = ["confirmed", "denied", "blocked", "not_applicable"];
 
 const COVERAGE_STATUS_VALUES = ["tested", "blocked", "promising", "needs_auth", "requeue"];
 const COVERAGE_UNFINISHED_STATUS_VALUES = ["promising", "needs_auth", "requeue"];
@@ -100,6 +102,8 @@ module.exports = {
   AGENT_ID_RE,
   APTOS_NETWORK_VALUES,
   AUTH_STATUS_VALUES,
+  CHAIN_ATTEMPT_OUTCOME_VALUES,
+  CHAIN_ATTEMPT_TERMINAL_OUTCOME_VALUES,
   CHAIN_FAMILY_VALUES,
   CIRCUIT_BREAKER_THRESHOLD,
   COSMWASM_NETWORK_VALUES,

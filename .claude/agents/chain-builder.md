@@ -1,7 +1,7 @@
 ---
 name: chain-builder
 description: Analyzes proven findings for credible exploit chains that elevate severity
-tools: Write, mcp__bountyagent__bounty_read_findings, mcp__bountyagent__bounty_read_wave_handoffs
+tools: Write, mcp__bountyagent__bounty_http_scan, mcp__bountyagent__bounty_read_http_audit, mcp__bountyagent__bounty_read_findings, mcp__bountyagent__bounty_write_chain_attempt, mcp__bountyagent__bounty_read_chain_attempts, mcp__bountyagent__bounty_read_wave_handoffs, mcp__bountyagent__bounty_list_auth_profiles
 model: opus
 color: purple
 mcpServers:

@@ -21,6 +21,7 @@ const HOOK_FILES = Object.freeze([
   "session-write-guard.sh",
   "bounty-statusline.js",
   "hunter-subagent-stop.js",
+  "bob-egress.js",
   "bob-update.js",
   "bob-check-update.js",
   "bob-check-update-worker.js",
@@ -35,6 +36,7 @@ const EXECUTABLE_HOOKS = Object.freeze([
   "scope-guard-mcp.sh",
   "session-write-guard.sh",
   "hunter-subagent-stop.js",
+  "bob-egress.js",
   "bob-update.js",
   "bob-check-update.js",
   "bob-check-update-worker.js",
@@ -42,6 +44,7 @@ const EXECUTABLE_HOOKS = Object.freeze([
 
 const BOB_COMMAND_FILES = Object.freeze([
   "bob-update.md",
+  "bob-egress.md",
 ]);
 
 const LEGACY_BOB_COMMAND_FILES = Object.freeze([
@@ -146,13 +149,13 @@ function renderUpdateCommand() {
     "Run the installed Hacker Bob update workflow for this project.",
     "",
     "1. Run:",
-    '   `node "$CLAUDE_PROJECT_DIR/.claude/hooks/bob-update.js" plan "$CLAUDE_PROJECT_DIR"`',
+    '   `node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-update.js" plan "${CLAUDE_PROJECT_DIR:-$PWD}"`',
     "2. If the helper says Hacker Bob is already up to date or cannot reach npm, report that result and stop.",
     "3. If an update is available or the install is legacy, ask the operator exactly: `Update now?`",
     "4. Only when the operator confirms, run:",
-    '   `npx -y hacker-bob@latest install "$CLAUDE_PROJECT_DIR"`',
+    '   `npx -y hacker-bob@latest install "${CLAUDE_PROJECT_DIR:-$PWD}"`',
     "5. Then run:",
-    '   `node "$CLAUDE_PROJECT_DIR/.claude/hooks/bob-update.js" clear-cache "$CLAUDE_PROJECT_DIR"`',
+    '   `node "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-update.js" clear-cache "${CLAUDE_PROJECT_DIR:-$PWD}"`',
     "6. Tell the operator to fully restart Claude Code in this project before continuing.",
     "",
   ].join("\n");
@@ -353,6 +356,14 @@ function install({
     );
   }
 
+  // Copy static command files (not renderer-driven). bob-egress.md is hand-
+  // authored and shipped verbatim; the renderer pattern is only used for
+  // commands that have dynamic per-host content like bob-update.md.
+  copyFile(
+    path.join(sourceRoot, ".claude", "commands", "bob-egress.md"),
+    path.join(claudeDir, "commands", "bob-egress.md"),
+  );
+
   for (const skill of BOB_SKILLS) {
     copyFile(
       path.join(sourceRoot, ".claude", "skills", skill, "SKILL.md"),
@@ -374,6 +385,17 @@ function install({
       mode,
     );
   }
+
+  // Egress profiles example + operator config (v1.1.7+).
+  // ensureEgressProfilesExample writes a versioned example operators can copy;
+  // ensureEgressProfilesConfig writes a default profile only when no operator
+  // file exists yet, preserving operator edits across reinstalls.
+  const {
+    ensureEgressProfilesConfig,
+    ensureEgressProfilesExample,
+  } = require("../../mcp/lib/egress-profiles.js");
+  ensureEgressProfilesExample(targetAbs);
+  ensureEgressProfilesConfig(targetAbs);
 
   const mcpPath = path.join(targetAbs, ".mcp.json");
   const settingsPath = path.join(claudeDir, "settings.json");
@@ -520,6 +542,71 @@ function doctor({
       addCheck(checks, "error", checkId("settings_statusline"), ".claude/settings.json is missing the Bob statusline");
     }
   }
+
+  // Egress profile config (v1.1.7): example + operator file + dependency check.
+  const {
+    egressProfilesPath,
+    egressProfilesExamplePath,
+    normalizeEgressProfilesDocument,
+  } = require("../../mcp/lib/egress-profiles.js");
+  const egressExample = egressProfilesExamplePath(targetAbs);
+  if (fileExists(egressExample)) {
+    addCheck(checks, "ok", checkId("egress_profiles_example"), ".claude/bob/egress-profiles.example.json is installed");
+  } else {
+    addCheck(checks, "warn", checkId("egress_profiles_example"), ".claude/bob/egress-profiles.example.json is missing; reinstall to restore the operator template");
+  }
+  const egressConfigPath = egressProfilesPath(targetAbs);
+  if (!fileExists(egressConfigPath)) {
+    addCheck(checks, "warn", checkId("egress_profiles_config"), ".claude/bob/egress-profiles.json is missing; egress defaults to direct local connections");
+  } else {
+    try {
+      const egressConfig = normalizeEgressProfilesDocument(JSON.parse(fs.readFileSync(egressConfigPath, "utf8")));
+      addCheck(checks, "ok", checkId("egress_profiles_config"), ".claude/bob/egress-profiles.json is valid");
+      const nonDefaultEnabled = egressConfig.profiles.some((profile) => profile.name !== "default" && profile.enabled);
+      if (nonDefaultEnabled) {
+        addCheck(checks, "ok", checkId("egress_profiles_non_default"), "At least one non-default egress profile is enabled");
+      } else {
+        addCheck(checks, "warn", checkId("egress_profiles_non_default"), "No enabled non-default egress profiles are configured; this is optional");
+      }
+    } catch (error) {
+      addCheck(checks, "error", checkId("egress_profiles_config"), ".claude/bob/egress-profiles.json is invalid", {
+        error: error && error.message ? error.message : String(error),
+      });
+    }
+  }
+
+  // proxy-agent dependency for non-default egress profiles.
+  let proxyAgentInstalled = false;
+  try {
+    require.resolve("proxy-agent", { paths: [targetAbs] });
+    proxyAgentInstalled = true;
+  } catch {}
+  if (proxyAgentInstalled) {
+    addCheck(checks, "ok", checkId("mcp_dependency_proxy_agent"), "proxy-agent is available for egress profiles");
+  } else {
+    addCheck(checks, "warn", checkId("mcp_dependency_proxy_agent"), "proxy-agent is missing; non-default egress profiles will not work until dependencies are installed");
+  }
+
+  // Policy replay harness (v1.1.4): testing/policy-replay/ files for /bob-debug replay diagnostics.
+  const POLICY_REPLAY_FILES = [
+    "replay.mjs",
+    "tune.mjs",
+    "synth-session.mjs",
+    "case-schema.mjs",
+    "bench.mjs",
+    "README.md",
+    path.join("cases", "sample-hunter-refusal.json"),
+  ];
+  const missingPolicyReplay = POLICY_REPLAY_FILES
+    .map((name) => path.join("testing", "policy-replay", name))
+    .filter((relative) => !fileExists(path.join(targetAbs, relative)));
+  if (missingPolicyReplay.length === 0) {
+    addCheck(checks, "ok", checkId("policy_replay_harness"), "Policy replay harness is installed");
+  } else {
+    addCheck(checks, "warn", checkId("policy_replay_harness"), "Policy replay harness files are missing; /bob-debug replay diagnostics will fall back to legacy mode", {
+      missing: missingPolicyReplay,
+    });
+  }
 }
 
 function removeMcpConfig(targetAbs, result, helpers) {
@@ -619,6 +706,30 @@ function removeSettingsConfig(targetAbs, result, helpers) {
   }
 }
 
+function removeGeneratedEgressConfig(targetAbs, result) {
+  // Egress profile config under .claude/bob/egress-profiles.json is operator-
+  // owned at runtime — they may add proxies, env-var refs, regions. Preserve
+  // it on uninstall unless it's still the untouched default. Detection lives
+  // in egress-profiles.js so adapters and tests share one rule.
+  const {
+    egressProfilesPath,
+    isUntouchedGeneratedEgressConfig,
+  } = require("../../mcp/lib/egress-profiles.js");
+  const configPath = egressProfilesPath(targetAbs);
+  const relativePath = path.join(".claude", "bob", "egress-profiles.json");
+  if (!fs.existsSync(configPath)) return;
+  if (!isUntouchedGeneratedEgressConfig(targetAbs)) {
+    result.skipped.push({
+      type: "config",
+      path: relativePath,
+      reason: "operator-owned egress profile config is preserved",
+    });
+    return;
+  }
+  result.actions.push({ type: "remove_file", path: relativePath });
+  if (!result.dry_run) fs.rmSync(configPath, { force: true });
+}
+
 function uninstall({
   sourceRoot,
   targetAbs,
@@ -628,6 +739,7 @@ function uninstall({
 }) {
   if (!preserveMcpConfig) removeMcpConfig(targetAbs, result, helpers);
   removeSettingsConfig(targetAbs, result, helpers);
+  removeGeneratedEgressConfig(targetAbs, result);
 
   for (const relativePath of managedFiles(sourceRoot)) {
     helpers.maybeRemoveFile(targetAbs, relativePath, result);

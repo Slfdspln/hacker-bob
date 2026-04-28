@@ -8,8 +8,12 @@
       "mcp__bountyagent__bounty_record_finding",
       "mcp__bountyagent__bounty_read_findings",
       "mcp__bountyagent__bounty_list_findings",
+      "mcp__bountyagent__bounty_write_chain_attempt",
+      "mcp__bountyagent__bounty_read_chain_attempts",
       "mcp__bountyagent__bounty_write_verification_round",
       "mcp__bountyagent__bounty_read_verification_round",
+      "mcp__bountyagent__bounty_write_evidence_packs",
+      "mcp__bountyagent__bounty_read_evidence_packs",
       "mcp__bountyagent__bounty_write_grade_verdict",
       "mcp__bountyagent__bounty_read_grade_verdict",
       "mcp__bountyagent__bounty_read_session_state",
@@ -64,12 +68,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard.sh\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-write-guard.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session-write-guard.sh\"",
             "timeout": 5
           }
         ]
@@ -79,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-write-guard.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session-write-guard.sh\"",
             "timeout": 5
           }
         ]
@@ -89,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
             "timeout": 5
           }
         ]
@@ -99,7 +103,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
             "timeout": 5
           }
         ]
@@ -109,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/scope-guard-mcp.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/scope-guard-mcp.sh\"",
             "timeout": 5
           }
         ]
@@ -121,7 +125,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/hunter-subagent-stop.js\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/hunter-subagent-stop.js\"",
             "timeout": 10
           }
         ]
@@ -133,7 +137,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bob-check-update.js\" \"$CLAUDE_PROJECT_DIR\"",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bob-check-update.js\" \"${CLAUDE_PROJECT_DIR:-$PWD}\"",
             "timeout": 2
           }
         ]
@@ -142,6 +146,6 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bounty-statusline.js\""
+    "command": "node \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/bounty-statusline.js\""
   }
 }
