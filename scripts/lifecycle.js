@@ -17,8 +17,14 @@ const {
 const {
   defaultClaudeSettings,
 } = require("../mcp/lib/claude-config.js");
+const {
+  egressProfilesPath,
+  isUntouchedGeneratedEgressConfig,
+  normalizeEgressProfilesDocument,
+} = require("../mcp/lib/egress-profiles.js");
 
 const BOB_COMMAND_FILES = Object.freeze([
+  "bob-egress.md",
   "bob-update.md",
 ]);
 
@@ -195,6 +201,15 @@ function loadServerCheck(serverPath) {
   });
 }
 
+function moduleResolvableFrom(moduleName, fromDir) {
+  try {
+    require.resolve(moduleName, { paths: [fromDir] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function httpxAvailable() {
   return commandExists("httpx") || fileExists(path.join(os.homedir(), "go", "bin", "httpx"));
 }
@@ -260,6 +275,26 @@ function doctorProject(projectDir, options = {}) {
     } else {
       addCheck(checks, "error", "install_metadata", "Install metadata is incomplete or mismatched", {
         errors: metadataErrors,
+      });
+    }
+  }
+
+  const egressPath = egressProfilesPath(targetAbs);
+  if (!fileExists(egressPath)) {
+    addCheck(checks, "warn", "egress_profiles_config", ".claude/bob/egress-profiles.json is missing; egress defaults to direct local connections");
+  } else {
+    try {
+      const egressConfig = normalizeEgressProfilesDocument(readJson(egressPath));
+      addCheck(checks, "ok", "egress_profiles_config", ".claude/bob/egress-profiles.json is valid");
+      const nonDefaultEnabled = egressConfig.profiles.some((profile) => profile.name !== "default" && profile.enabled);
+      if (nonDefaultEnabled) {
+        addCheck(checks, "ok", "egress_profiles_non_default", "At least one non-default egress profile is enabled");
+      } else {
+        addCheck(checks, "warn", "egress_profiles_non_default", "No enabled non-default egress profiles are configured; this is optional");
+      }
+    } catch (error) {
+      addCheck(checks, "error", "egress_profiles_config", ".claude/bob/egress-profiles.json is invalid", {
+        errors: [error.message || String(error)],
       });
     }
   }
@@ -362,6 +397,12 @@ function doctorProject(projectDir, options = {}) {
     }
   }
 
+  if (moduleResolvableFrom("proxy-agent", path.join(targetAbs, "mcp"))) {
+    addCheck(checks, "ok", "mcp_dependency_proxy_agent", "proxy-agent is available to the installed MCP runtime");
+  } else {
+    addCheck(checks, "warn", "mcp_dependency_proxy_agent", "proxy-agent is missing; non-default egress profiles will not work until dependencies are installed");
+  }
+
   for (const tool of ["subfinder", "nuclei"]) {
     if (commandExists(tool)) {
       addCheck(checks, "ok", `optional_tool_${tool}`, `${tool} is available`);
@@ -452,6 +493,7 @@ function managedClaudeFiles(sourceRoot) {
     ...sourceDirFiles(sourceRoot, path.join(".claude", "bypass-tables"), (name) => name.endsWith(".txt")),
     ...sourceDirFiles(sourceRoot, path.join(".claude", "knowledge"), (name) => name.endsWith(".json")),
     ...HOOK_FILES.map((name) => path.join(".claude", "hooks", name)),
+    path.join(".claude", "bob", "egress-profiles.example.json"),
     path.join(".claude", "bob", "VERSION"),
     path.join(".claude", "bob", "install.json"),
   ];
@@ -479,6 +521,13 @@ function maybeRemoveEmptyDir(targetAbs, relativePath, result) {
   if (fs.readdirSync(dirPath).length !== 0) return;
   result.actions.push({ type: "remove_empty_dir", path: relativePath });
   if (!result.dry_run) fs.rmdirSync(dirPath);
+}
+
+function maybeRemoveDirTree(targetAbs, relativePath, result) {
+  const dirPath = path.join(targetAbs, relativePath);
+  if (!dirExists(dirPath)) return;
+  result.actions.push({ type: "remove_dir", path: relativePath });
+  if (!result.dry_run) fs.rmSync(dirPath, { recursive: true, force: true });
 }
 
 function pruneManagedDirs(targetAbs, result) {
@@ -646,6 +695,22 @@ function removeSettingsConfig(targetAbs, result) {
   }
 }
 
+function removeGeneratedEgressConfig(targetAbs, result) {
+  const configPath = egressProfilesPath(targetAbs);
+  const relativePath = path.join(".claude", "bob", "egress-profiles.json");
+  if (!fileExists(configPath)) return;
+  if (!isUntouchedGeneratedEgressConfig(targetAbs)) {
+    result.skipped.push({
+      type: "config",
+      path: relativePath,
+      reason: "operator-owned egress profile config is preserved",
+    });
+    return;
+  }
+  result.actions.push({ type: "remove_file", path: relativePath });
+  if (!result.dry_run) fs.rmSync(configPath, { force: true });
+}
+
 function uninstallProject(projectDir, options = {}) {
   const sourceRoot = path.resolve(options.sourceRoot || path.join(__dirname, ".."));
   const targetAbs = path.resolve(projectDir || ".");
@@ -662,6 +727,7 @@ function uninstallProject(projectDir, options = {}) {
 
   removeMcpConfig(targetAbs, result);
   removeSettingsConfig(targetAbs, result);
+  removeGeneratedEgressConfig(targetAbs, result);
 
   for (const relativePath of [
     ...managedClaudeFiles(sourceRoot),
@@ -669,6 +735,7 @@ function uninstallProject(projectDir, options = {}) {
   ]) {
     maybeRemoveFile(targetAbs, relativePath, result);
   }
+  maybeRemoveDirTree(targetAbs, path.join("mcp", "node_modules"), result);
 
   pruneManagedDirs(targetAbs, result);
   return result;

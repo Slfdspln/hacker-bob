@@ -20,6 +20,11 @@ module.exports = Object.freeze({
       },
       timeout_ms: { type: "number" },
       auth_profile: { type: "string" },
+      egress_profile: {
+        type: "string",
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+        description: "Optional named egress profile from .claude/bob/egress-profiles.json. Defaults to direct local egress.",
+      },
       target_domain: { type: "string", description: "Required session domain for scope ownership, audit ownership, and allowed-host resolution." },
       wave: { type: "string", pattern: "^w[1-9][0-9]*$", description: "Optional wave ID for request audit correlation." },
       agent: { type: "string", pattern: "^a[1-9][0-9]*$", description: "Optional agent ID for request audit correlation." },

@@ -9,6 +9,11 @@ const {
 } = require("./validation.js");
 const { appendHttpAuditRecord } = require("./http-records.js");
 const {
+  createProxyAgent,
+  resolveEgressProfile,
+} = require("./egress-profiles.js");
+const {
+  isFirstPartyHost,
   safeUrlObject,
 } = require("./url-surface.js");
 const { resolveAuthProfile } = require("./auth.js");
@@ -19,6 +24,11 @@ const {
   assertSafeRequestUrl,
   safeFetch,
 } = require("./safe-fetch.js");
+
+function isNetworkUnreachableError(message) {
+  return /timeout|abort|econnreset|socket hang up|etimedout|enotfound|eai_again|econnrefused|network unreachable|connection reset/i
+    .test(String(message || ""));
+}
 
 async function httpScan(args) {
   const method = assertRequiredText(args.method, "method").toUpperCase();
@@ -36,6 +46,14 @@ async function httpScan(args) {
   }
   const blockInternalHosts = args.block_internal_hosts === true;
   const parsedUrl = safeUrlObject(url);
+  const requestedEgressProfile = args.egress_profile == null
+    ? "default"
+    : assertNonEmptyString(args.egress_profile, "egress_profile");
+  let egressContext = {
+    egress_profile: requestedEgressProfile,
+    egress_region: null,
+  };
+  let egressAgent = null;
   const auditUrl = redactUrlSensitiveValues(url);
   const auditParsedUrl = safeUrlObject(auditUrl) || parsedUrl;
   const auditBase = targetDomain ? {
@@ -50,16 +68,40 @@ async function httpScan(args) {
     agent: args.agent == null ? null : parseAgentId(args.agent),
     surface_id: args.surface_id == null ? null : assertNonEmptyString(args.surface_id, "surface_id"),
     auth_profile: args.auth_profile || null,
+    egress_profile: requestedEgressProfile,
+    egress_region: null,
   } : null;
   const audit = (fields) => {
     if (!auditBase) return;
     appendHttpAuditRecord({
       ...auditBase,
+      ...egressContext,
       ...fields,
       ts: new Date().toISOString(),
       duration_ms: Date.now() - startedAt,
     });
   };
+
+  try {
+    const profile = resolveEgressProfile(requestedEgressProfile);
+    egressContext = {
+      egress_profile: profile.name,
+      egress_region: profile.region,
+    };
+    egressAgent = createProxyAgent(profile.proxy_url);
+  } catch (error) {
+    const message = error.message || String(error);
+    audit({
+      status: null,
+      error: message,
+      scope_decision: "egress_error",
+    });
+    return JSON.stringify({
+      error: `${message} — request was NOT sent.`,
+      scope_decision: "egress_error",
+      ...egressContext,
+    });
+  }
 
   try {
     assertSafeRequestUrl(url, targetDomain, { blockInternalHosts });
@@ -72,6 +114,7 @@ async function httpScan(args) {
     return JSON.stringify({
       error: error.message || String(error),
       scope_decision: "blocked",
+      ...egressContext,
     });
   }
 
@@ -96,6 +139,7 @@ async function httpScan(args) {
       });
       return JSON.stringify({
         error: `auth_profile "${authProfile}" requested but not found — request was NOT sent. Store auth first via bounty_auth_store.`,
+        ...egressContext,
       });
     }
   }
@@ -120,6 +164,7 @@ async function httpScan(args) {
       timeoutMs,
       targetDomain,
       blockInternalHosts,
+      agent: egressAgent,
     });
 
     const respHeaders = {};
@@ -157,6 +202,7 @@ async function httpScan(args) {
         redirected,
         redirect_count: redirectCount,
         final_url: finalUrl,
+        ...egressContext,
       });
     }
 
@@ -168,6 +214,7 @@ async function httpScan(args) {
         redirected,
         redirect_count: redirectCount,
         final_url: finalUrl,
+        ...egressContext,
       });
     }
 
@@ -183,6 +230,7 @@ async function httpScan(args) {
         redirect_count: redirectCount,
         final_url: finalUrl,
         analysis,
+        ...egressContext,
       }, null, 2);
     }
 
@@ -195,20 +243,30 @@ async function httpScan(args) {
       redirect_count: redirectCount,
       final_url: finalUrl,
       analysis,
+      ...egressContext,
     }, null, 2);
   } catch (err) {
     const errorMessage = err && err.name === "AbortError"
       ? `timeout after ${timeoutMs}ms`
       : (err.message || String(err));
     const isBlocked = err && err.scope_decision === "blocked";
+    const targetOwned = parsedUrl ? isFirstPartyHost(parsedUrl.hostname, targetDomain) : false;
+    const networkUnreachable = !isBlocked && targetOwned && isNetworkUnreachableError(errorMessage);
     audit({
       status: null,
       error: errorMessage,
-      scope_decision: isBlocked ? "blocked" : "request_error",
+      scope_decision: isBlocked ? "blocked" : networkUnreachable ? "network_unreachable_target" : "request_error",
     });
     return JSON.stringify(isBlocked
-      ? { error: errorMessage, scope_decision: "blocked" }
-      : { error: errorMessage });
+      ? { error: errorMessage, scope_decision: "blocked", ...egressContext }
+      : {
+        error: errorMessage,
+        ...(networkUnreachable ? {
+          error_class: "network_unreachable_target",
+          geofence_warning: "Repeated first-party network failures may indicate a geofenced or unreachable target. Log coverage/dead-end context and ask the operator before switching egress profiles.",
+        } : {}),
+        ...egressContext,
+      });
   }
 }
 

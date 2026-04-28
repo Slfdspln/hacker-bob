@@ -1,14 +1,17 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { promisify } = require("node:util");
 
 const ROOT = path.join(__dirname, "..");
 const CLI = path.join(ROOT, "bin", "hacker-bob.js");
 const PACKAGE_VERSION = require("../package.json").version;
+const execFileAsync = promisify(execFile);
 
 test("CLI help explains per-project installs and global CLI behavior", () => {
   const output = execFileSync(process.execPath, [CLI, "--help"], {
@@ -39,7 +42,10 @@ test("CLI installs into a workspace", () => {
 
     assert.equal(fs.readFileSync(path.join(workspace, ".claude", "bob", "VERSION"), "utf8").trim(), PACKAGE_VERSION);
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-update.md")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "commands", "bob-egress.md")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.json")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -250,6 +256,13 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
       env: { ...process.env, HOME: tempHome },
       stdio: "pipe",
     });
+    fs.writeFileSync(path.join(workspace, ".claude", "bob", "egress-profiles.json"), `${JSON.stringify({
+      version: 1,
+      profiles: [
+        { name: "default", proxy_url: null, region: null, description: "Direct", enabled: true },
+        { name: "operator", proxy_url: "${BOB_EGRESS_OPERATOR_PROXY}", region: "EU", description: "Operator-owned", enabled: true },
+      ],
+    }, null, 2)}\n`);
     fs.writeFileSync(path.join(tempHome, "bounty-agent-sessions", "keep.txt"), "keep\n");
 
     const output = execFileSync(process.execPath, [CLI, "uninstall", workspace, "--yes", "--json"], {
@@ -264,6 +277,8 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "commands", "bob", "hunt.md")));
     assert.ok(!fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
     assert.ok(!fs.existsSync(path.join(workspace, "mcp", "server.js")));
+    assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.json")));
+    assert.ok(result.skipped.some((item) => item.path === path.join(".claude", "bob", "egress-profiles.json")));
 
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
@@ -285,6 +300,97 @@ test("CLI uninstall --yes removes Bob-managed files and preserves unrelated conf
     )));
     assert.ok(fs.existsSync(path.join(tempHome, "bounty-agent-sessions", "keep.txt")));
   } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("installed bob-egress helper manages profiles and redacts credentials", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-egress-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+    const helper = path.join(workspace, ".claude", "hooks", "bob-egress.js");
+    const run = (args, env = {}) => execFileSync(process.execPath, [helper, workspace, ...args], {
+      cwd: workspace,
+      env: { ...process.env, HOME: tempHome, ...env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let listed = JSON.parse(run(["list", "--json"]));
+    assert.equal(listed.profiles.length, 1);
+    assert.equal(listed.profiles[0].name, "default");
+
+    run(["add", "operator", "--proxy-env", "BOB_EGRESS_OPERATOR_PROXY", "--region", "EU", "--description", "Operator profile", "--json"]);
+    listed = JSON.parse(run(["list", "--json"]));
+    const operator = listed.profiles.find((profile) => profile.name === "operator");
+    assert.equal(operator.enabled, true);
+    assert.equal(operator.proxy_configured, true);
+    assert.doesNotMatch(JSON.stringify(listed), /BOB_EGRESS_OPERATOR_PROXY|secret|proxy\.example/);
+
+    run(["disable", "operator", "--json"]);
+    listed = JSON.parse(run(["list", "--json"]));
+    assert.equal(listed.profiles.find((profile) => profile.name === "operator").enabled, false);
+
+    run(["enable", "operator", "--json"]);
+    listed = JSON.parse(run(["list", "--json"]));
+    assert.equal(listed.profiles.find((profile) => profile.name === "operator").enabled, true);
+
+    run(["remove", "operator", "--yes", "--json"]);
+    listed = JSON.parse(run(["list", "--json"]));
+    assert.equal(listed.profiles.some((profile) => profile.name === "operator"), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("installed bob-egress test handles default egress against a safe local endpoint", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-egress-test-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+  const localServer = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ip: "127.0.0.1" }));
+  });
+
+  try {
+    await new Promise((resolve) => localServer.listen(0, "127.0.0.1", resolve));
+    const port = localServer.address().port;
+    execFileSync(process.execPath, [CLI, "install", workspace], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+    const { stdout } = await execFileAsync(process.execPath, [
+      path.join(workspace, ".claude", "hooks", "bob-egress.js"),
+      workspace,
+      "test",
+      "default",
+      "--url",
+      `http://127.0.0.1:${port}/ip`,
+      "--json",
+    ], {
+      cwd: workspace,
+      env: { ...process.env, HOME: tempHome },
+      encoding: "utf8",
+    });
+    const result = JSON.parse(stdout);
+    assert.equal(result.profile.name, "default");
+    assert.equal(result.profile.proxy_configured, false);
+    assert.equal(result.observed.status, 200);
+    assert.equal(result.observed.ip, "127.0.0.1");
+  } finally {
+    await new Promise((resolve) => localServer.close(resolve));
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
   }

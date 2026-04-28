@@ -155,7 +155,10 @@ async function requestOnce(url, options) {
   const parsed = new URL(url);
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-  const selectedAddress = await resolveSafeAddress(parsed.hostname, options);
+  const hasAgent = options.agent != null;
+  const selectedAddress = hasAgent && !shouldBlockInternalHosts(options)
+    ? null
+    : await resolveSafeAddress(parsed.hostname, options);
   const requestModule = parsed.protocol === "https:" ? https : http;
   const bodyBuffer = bodyToBuffer(options.body);
 
@@ -167,22 +170,29 @@ async function requestOnce(url, options) {
       callback(value);
     };
 
-    const req = requestModule.request({
+    const requestOptions = {
       protocol: parsed.protocol,
       hostname: parsed.hostname,
       port: parsed.port || undefined,
       path: `${parsed.pathname}${parsed.search}`,
       method: options.method || "GET",
       headers: options.headers || {},
-      lookup: (_hostname, lookupOptions, callback) => {
+    };
+    if (options.agent) {
+      requestOptions.agent = options.agent;
+    }
+    if (selectedAddress) {
+      requestOptions.lookup = (_hostname, lookupOptions, callback) => {
         const cb = typeof lookupOptions === "function" ? lookupOptions : callback;
         if (lookupOptions && lookupOptions.all) {
           cb(null, [{ address: selectedAddress.address, family: selectedAddress.family }]);
           return;
         }
         cb(null, selectedAddress.address, selectedAddress.family);
-      },
-    }, (res) => {
+      };
+    }
+
+    const req = requestModule.request(requestOptions, (res) => {
       const chunks = [];
       let receivedBytes = 0;
       let truncated = false;

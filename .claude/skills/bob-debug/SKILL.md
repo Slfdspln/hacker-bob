@@ -79,6 +79,7 @@ Keep the traceability output concise:
 - Phase path: whether the session followed RECON -> AUTH -> HUNT -> CHAIN -> VERIFY -> GRADE -> REPORT, or documented EXPLORE after REPORT.
 - Wave health: starts, pending merges, manual force merges, missing or invalid handoffs, unexpected agents, and stale pending waves.
 - Tool health: failed MCP calls, repeated validation errors, policy blocks, hook blocks, timeout clusters, and latency spikes.
+- Egress health: `egress`, `egress_profile`, `egress_region`, `geofence_warnings`, `network_unreachable_target`, and circuit-breaker timeout clusters from pipeline analytics and HTTP audit summaries.
 - Policy replay candidates: false refusals, ambiguous safety wording, repeated policy preambles with no progress, tool/policy loops, or unsafe-compliance risk. Treat these as diagnostic findings only.
 - Findings flow: findings recorded, chained, verified through all rounds, covered by evidence packs when final-reportable, graded, and represented in the final report only after verification, evidence, and grade.
 - Artifact integrity: malformed JSON/JSONL, mismatched target metadata, missing verification/evidence/grade/report artifacts, and report presence.
@@ -136,6 +137,7 @@ Always include:
 - What drifted from the intended pipeline.
 - Root causes with artifact/transcript evidence.
 - Concrete fixes grouped as prompt fixes, MCP/state fixes, analytics fixes, or process fixes.
+- Egress/geofence assessment when reachability warnings are present, including whether the session should be resumed with an operator-selected `/bob-hunt --egress <profile>`.
 - Report trust assessment: final report is reliable only when final reportable findings have valid evidence packs; otherwise mark it partially reliable or should be rerun.
 
 Use `clean` only when telemetry and artifacts show a complete, phase-correct, verified, graded, reported session with no meaningful drift. Use `mostly_ok` when minor drift did not affect report trust. Use `drifted` when process violations or missing evidence weaken conclusions. Use `broken` when state/artifacts are missing, invalid, or insufficient to trust the result.

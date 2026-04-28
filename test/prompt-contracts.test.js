@@ -572,7 +572,7 @@ test("normal Bob workflows do not invoke live policy replay automatically outsid
   }
 });
 
-test("installer and dev-sync ship the bob-update command, the three skills, and prune deprecated paths", () => {
+test("installer and dev-sync ship the bob commands, the three skills, and prune deprecated paths", () => {
   const install = readFile("install.sh");
   const installer = readFile("scripts/install.js");
   const devSync = readFile("dev-sync.sh");
@@ -581,6 +581,7 @@ test("installer and dev-sync ship the bob-update command, the three skills, and 
 
   // Installer copies bob-update.md and proactively removes the legacy hunt/status/debug/update.md shims and the legacy bountyagent* skill directories so upgrades from <=1.1.1 don't leave orphan slash entries.
   assert.match(installer, /"bob-update\.md"/);
+  assert.match(installer, /"bob-egress\.md"/);
   assert.match(installer, /removeIfExists\(path\.join\(claudeDir, "commands", "bob", "hunt\.md"\)\)/);
   assert.match(installer, /removeIfExists\(path\.join\(claudeDir, "commands", "bob", "status\.md"\)\)/);
   assert.match(installer, /removeIfExists\(path\.join\(claudeDir, "commands", "bob", "debug\.md"\)\)/);
@@ -591,6 +592,7 @@ test("installer and dev-sync ship the bob-update command, the three skills, and 
 
   // dev-sync.sh mirrors the installer: copy bob-update.md to commands/, rm legacy paths.
   assert.match(devSync, /cp "\$SCRIPT_DIR\/\.claude\/commands\/bob-update\.md"/);
+  assert.match(devSync, /cp "\$SCRIPT_DIR\/\.claude\/commands\/bob-egress\.md"/);
   assert.match(devSync, /rm -f "\$CLAUDE_DIR\/commands\/bob\/hunt\.md" "\$CLAUDE_DIR\/commands\/bob\/status\.md" "\$CLAUDE_DIR\/commands\/bob\/debug\.md" "\$CLAUDE_DIR\/commands\/bob\/update\.md"/);
   assert.match(devSync, /rm -rf "\$CLAUDE_DIR\/skills\/bountyagent" "\$CLAUDE_DIR\/skills\/bountyagentstatus" "\$CLAUDE_DIR\/skills\/bountyagentdebug"/);
 
@@ -600,6 +602,8 @@ test("installer and dev-sync ship the bob-update command, the three skills, and 
   assert.match(devSync, /\.claude\/skills\/bob-debug\/SKILL\.md/);
   assert.match(installer, /"bob-hunt"/);
   assert.match(devSync, /\.claude\/skills\/bob-hunt\/SKILL\.md/);
+  assert.match(installer, /bob-egress\.js/);
+  assert.match(devSync, /bob-egress\.js/);
 });
 
 test("root-orchestrator MCP calls are covered by skill allowed-tools", () => {
@@ -767,6 +771,23 @@ test("orchestrator documents checkpoint modes and MCP-owned traffic/audit/intel/
   assert.match(orchestrator, /bounty_public_intel[\s\S]*public-intel\.json/);
   assert.match(orchestrator, /bounty_import_static_artifact[\s\S]*static-imports/);
   assert.match(orchestrator, /bounty_static_scan[\s\S]*static-scan-results\.jsonl/);
+});
+
+test("orchestrator documents operator-controlled egress without random proxy or TOR guidance", () => {
+  const files = [
+    ".claude/skills/bob-hunt/SKILL.md",
+    ".claude/skills/bob-status/SKILL.md",
+    ".claude/skills/bob-debug/SKILL.md",
+    ".claude/agents/hunter-agent.md",
+    ".claude/commands/bob-egress.md",
+  ];
+  const combined = files.map(readFile).join("\n");
+
+  assert.match(combined, /--egress <profile>/);
+  assert.match(combined, /egress_profile/);
+  assert.match(combined, /network_unreachable_target/);
+  assert.match(combined, /operator-controlled|operator has chosen|operator-managed/);
+  assert.doesNotMatch(combined, /\bTOR\b|\bTor\b|random public prox(?:y|ies)|proxy scraping|auto-rotate|silent rotation/i);
 });
 
 test("orchestrator handles auto-signup manual fallback through data fallback fields", () => {

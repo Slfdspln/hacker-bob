@@ -24,6 +24,7 @@ const {
   evidencePackPaths,
   findingsJsonlPath,
   gradeArtifactPaths,
+  httpAuditJsonlPath,
   pipelineEventsJsonlPath,
   reportMarkdownPath,
   sessionDir,
@@ -47,6 +48,11 @@ const {
 const {
   requireValidEvidencePacksForFinalReportableFindings,
 } = require("./evidence.js");
+const {
+  buildCircuitBreakerSummary,
+  readHttpAuditRecordsFromJsonl,
+  summarizeHttpAuditRecords,
+} = require("./http-records.js");
 
 const PIPELINE_ANALYTICS_VERSION = 1;
 const PIPELINE_EVENT_VERSION = 1;
@@ -496,6 +502,43 @@ function summarizeChainAttemptsJsonl(targetDomain) {
   };
 }
 
+function summarizeHttpAuditJsonl(targetDomain) {
+  const filePath = httpAuditJsonlPath(targetDomain);
+  const summary = {
+    exists: fs.existsSync(filePath),
+    total: 0,
+    errors: 0,
+    scope_blocked: 0,
+    network_unreachable_target: 0,
+    egress: { by_profile: {}, by_region: {} },
+    geofence_warning: {
+      threshold: 3,
+      warning: false,
+      code: null,
+      note: null,
+      hosts: [],
+    },
+    circuit_breaker_summary: buildCircuitBreakerSummary([]),
+    error: null,
+    mtime: fileMtimeIso(filePath),
+  };
+  if (!summary.exists) return summary;
+  try {
+    const records = readHttpAuditRecordsFromJsonl(targetDomain);
+    const auditSummary = summarizeHttpAuditRecords(records, { targetDomain });
+    summary.total = auditSummary.total;
+    summary.errors = auditSummary.errors;
+    summary.scope_blocked = auditSummary.scope_blocked;
+    summary.network_unreachable_target = auditSummary.network_unreachable_target;
+    summary.egress = auditSummary.egress;
+    summary.geofence_warning = auditSummary.geofence_warning;
+    summary.circuit_breaker_summary = buildCircuitBreakerSummary(records);
+  } catch (error) {
+    summary.error = `Malformed http-audit.jsonl: ${error.message || String(error)}`;
+  }
+  return summary;
+}
+
 function summarizeStructuredHandoffChainNotes(targetDomain) {
   const dir = sessionDir(targetDomain);
   const summary = {
@@ -734,6 +777,7 @@ function readSessionArtifactSummary(targetDomain) {
   const waves = waveNumbers.map((waveNumber) => readWaveReadiness(targetDomain, waveNumber));
   const findings = summarizeFindingsJsonl(targetDomain);
   const coverage = summarizeCoverageJsonl(targetDomain);
+  const httpAudit = summarizeHttpAuditJsonl(targetDomain);
   const chainAttempts = summarizeChainAttemptsJsonl(targetDomain);
   const chainHandoffs = summarizeStructuredHandoffChainNotes(targetDomain);
   const attackSurfaceCoverage = summarizeAttackSurfaceCoverage(targetDomain, state);
@@ -748,6 +792,7 @@ function readSessionArtifactSummary(targetDomain) {
     stateRead.mtime,
     findings.mtime,
     coverage.mtime,
+    httpAudit.mtime,
     chainAttempts.mtime,
     attackSurfaceCoverage.mtime,
     verification.latest_mtime,
@@ -763,6 +808,7 @@ function readSessionArtifactSummary(targetDomain) {
   if (stateRead.error) artifactErrors.push(stateRead.error);
   if (findings.error) artifactErrors.push(findings.error);
   if (coverage.error) artifactErrors.push(coverage.error);
+  if (httpAudit.error) artifactErrors.push(httpAudit.error);
   if (chainAttempts.error) artifactErrors.push(chainAttempts.error);
   if (findings.malformed_lines > 0) artifactErrors.push(`Malformed findings.jsonl lines: ${findings.malformed_lines}`);
   if (coverage.malformed_lines > 0) artifactErrors.push(`Malformed coverage.jsonl lines: ${coverage.malformed_lines}`);
@@ -792,6 +838,7 @@ function readSessionArtifactSummary(targetDomain) {
     waves,
     findings,
     coverage,
+    http_audit: httpAudit,
     chain_attempts: chainAttempts,
     chain_handoffs: chainHandoffs,
     attack_surface_coverage: attackSurfaceCoverage,
@@ -1172,6 +1219,14 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
     }));
   }
 
+  if (artifacts.http_audit.geofence_warning && artifacts.http_audit.geofence_warning.warning) {
+    issues.push(issue("network_unreachable_target", "needs_attention", "Repeated first-party network failures may indicate geofencing or target reachability problems.", {
+      egress: artifacts.http_audit.egress,
+      geofence_warning: artifacts.http_audit.geofence_warning,
+      circuit_breaker: artifacts.http_audit.circuit_breaker_summary,
+    }));
+  }
+
   const coverage = artifacts.attack_surface_coverage;
   if (
     phaseAtLeast(artifacts.state.phase, "CHAIN") &&
@@ -1261,6 +1316,14 @@ function analyzeSession(targetDomain, { cutoffMs = null, limit = DEFAULT_LIMIT, 
       representative_samples_count: artifacts.evidence.representative_samples_count,
       reportable_findings_covered: artifacts.evidence.reportable_findings_covered,
       missing_finding_ids: artifacts.evidence.missing_finding_ids,
+    },
+    egress: artifacts.http_audit.egress,
+    geofence_warnings: artifacts.http_audit.geofence_warning,
+    http_audit: {
+      total: artifacts.http_audit.total,
+      errors: artifacts.http_audit.errors,
+      scope_blocked: artifacts.http_audit.scope_blocked,
+      network_unreachable_target: artifacts.http_audit.network_unreachable_target,
     },
     grade_verdict: artifacts.grade.verdict,
     report_present: artifacts.report.present,
@@ -1370,6 +1433,7 @@ function actionForBottleneck(bottleneck) {
     hunter_handoff_failures: "Resume the pending wave after missing hunters write valid structured handoffs, or force-merge intentionally.",
     repeated_hunter_stops: "Fix the hunter final-marker or handoff path that is repeatedly blocking SubagentStop.",
     mcp_tool_failures: "Inspect failing MCP tools and address the dominant error code before launching more agents.",
+    network_unreachable_target: "Log blocked coverage/dead-end context, then choose an explicit egress profile if the operator approves a regional retry.",
     auth_failures: "Refresh or recapture auth profiles before additional authenticated testing.",
     low_coverage: "Launch another wave for unexplored non-low surfaces before verification.",
     chain_phase_no_attempts: "Run the chain-builder again so it records terminal chain attempts, or transition with an explicit override reason.",

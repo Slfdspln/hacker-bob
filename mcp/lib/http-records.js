@@ -65,6 +65,8 @@ function normalizeHttpAuditRecord(record, { expectedDomain = null, lineNumber = 
       agent: record.agent == null ? null : parseAgentId(record.agent),
       surface_id: normalizeOptionalText(record.surface_id, "surface_id"),
       auth_profile: normalizeOptionalText(record.auth_profile, "auth_profile"),
+      egress_profile: normalizeOptionalText(record.egress_profile, "egress_profile") || "default",
+      egress_region: normalizeOptionalText(record.egress_region, "egress_region"),
       status: normalizeOptionalInteger(record.status, "status", { min: 100, max: 599 }),
       error: normalizeOptionalText(record.error, "error"),
       scope_decision: assertRequiredText(record.scope_decision, "scope_decision"),
@@ -136,12 +138,77 @@ function compactHttpAuditRecord(record) {
   };
   if (record.error) item.error = record.error;
   if (record.auth_profile) item.auth_profile = record.auth_profile;
+  if (record.egress_profile) item.egress_profile = record.egress_profile;
+  if (record.egress_region) item.egress_region = record.egress_region;
   if (record.wave || record.agent) item.wave_agent = `${record.wave || "?"}/${record.agent || "?"}`;
   if (record.surface_id) item.surface_id = record.surface_id;
   return item;
 }
 
-function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT_SUMMARY_MAX_ITEMS } = {}) {
+function isNetworkUnreachableRecord(record) {
+  if (!record || record.status != null) return false;
+  if (record.scope_decision === "network_unreachable_target") return true;
+  return /timeout|abort|econnreset|socket hang up|etimedout|enotfound|eai_again|econnrefused|network unreachable|connection reset/i
+    .test(record.error || "");
+}
+
+function summarizeEgressProfiles(records) {
+  const byProfile = {};
+  const byRegion = {};
+  for (const record of records) {
+    const profile = record.egress_profile || "default";
+    byProfile[profile] = (byProfile[profile] || 0) + 1;
+    if (record.egress_region) {
+      byRegion[record.egress_region] = (byRegion[record.egress_region] || 0) + 1;
+    }
+  }
+  return { by_profile: byProfile, by_region: byRegion };
+}
+
+function summarizeGeofenceWarnings(records, targetDomain, { threshold = CIRCUIT_BREAKER_THRESHOLD } = {}) {
+  const byHost = new Map();
+  for (const record of records) {
+    const host = record.host || hostnameFromUrl(record.url) || "unknown";
+    if (!isFirstPartyHost(host, targetDomain)) continue;
+    if (!isNetworkUnreachableRecord(record)) continue;
+    if (!byHost.has(host)) {
+      byHost.set(host, {
+        host,
+        failures: 0,
+        egress_profiles: new Set(),
+        latest_ts: null,
+      });
+    }
+    const item = byHost.get(host);
+    item.failures += 1;
+    item.egress_profiles.add(record.egress_profile || "default");
+    if (!item.latest_ts || Date.parse(record.ts) > Date.parse(item.latest_ts)) {
+      item.latest_ts = record.ts;
+    }
+  }
+
+  const hosts = Array.from(byHost.values())
+    .filter((item) => item.failures >= threshold)
+    .sort((a, b) => b.failures - a.failures || a.host.localeCompare(b.host))
+    .map((item) => ({
+      host: item.host,
+      failures: item.failures,
+      egress_profiles: Array.from(item.egress_profiles).sort(),
+      latest_ts: item.latest_ts,
+    }));
+
+  return {
+    threshold,
+    warning: hosts.length > 0,
+    code: hosts.length > 0 ? "network_unreachable_target" : null,
+    note: hosts.length > 0
+      ? "Repeated first-party timeouts or connection failures may indicate a geofenced or unreachable target. Keep egress switching operator-controlled."
+      : null,
+    hosts,
+  };
+}
+
+function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT_SUMMARY_MAX_ITEMS, targetDomain = null } = {}) {
   const filteredRecords = (surface ? records.filter((record) => recordMatchesSurface(record, surface)) : records)
     .slice()
     .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
@@ -150,9 +217,11 @@ function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT
   const byStatusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 };
   let errorCount = 0;
   let blockedByScope = 0;
+  let networkUnreachable = 0;
   for (const record of filteredRecords) {
     if (record.error) errorCount += 1;
     if (record.scope_decision === "blocked") blockedByScope += 1;
+    if (isNetworkUnreachableRecord(record)) networkUnreachable += 1;
     if (record.status == null) {
       byStatusClass.other += 1;
       continue;
@@ -173,13 +242,19 @@ function summarizeHttpAuditRecords(records, { surface = null, limit = HTTP_AUDIT
     by_status_class: byStatusClass,
     errors: errorCount,
     scope_blocked: blockedByScope,
+    network_unreachable_target: networkUnreachable,
+    egress: summarizeEgressProfiles(filteredRecords),
+    geofence_warning: summarizeGeofenceWarnings(
+      filteredRecords,
+      targetDomain || (filteredRecords[0] && filteredRecords[0].target_domain) || null,
+    ),
     recent: shownRecords.map(compactHttpAuditRecord),
   };
 }
 
 function isCircuitBreakerFailure(record) {
   if (record.status === 403 || record.status === 429) return true;
-  if (record.scope_decision === "request_error" && /timeout|abort/i.test(record.error || "")) return true;
+  if (["request_error", "network_unreachable_target"].includes(record.scope_decision) && /timeout|abort|econnreset|connection reset/i.test(record.error || "")) return true;
   return false;
 }
 
@@ -190,13 +265,24 @@ function buildCircuitBreakerSummary(records, { surface = null, threshold = CIRCU
   for (const record of relevantRecords) {
     const host = record.host || hostnameFromUrl(record.url) || "unknown";
     if (!byHost.has(host)) {
-      byHost.set(host, { host, failures: 0, status_403: 0, status_429: 0, timeouts: 0, latest_ts: null });
+      byHost.set(host, {
+        host,
+        failures: 0,
+        status_403: 0,
+        status_429: 0,
+        timeouts: 0,
+        connection_errors: 0,
+        egress_profiles: new Set(),
+        latest_ts: null,
+      });
     }
     const item = byHost.get(host);
     item.failures += 1;
     if (record.status === 403) item.status_403 += 1;
     if (record.status === 429) item.status_429 += 1;
     if (/timeout|abort/i.test(record.error || "")) item.timeouts += 1;
+    if (isNetworkUnreachableRecord(record)) item.connection_errors += 1;
+    item.egress_profiles.add(record.egress_profile || "default");
     if (!item.latest_ts || Date.parse(record.ts) > Date.parse(item.latest_ts)) {
       item.latest_ts = record.ts;
     }
@@ -204,6 +290,10 @@ function buildCircuitBreakerSummary(records, { surface = null, threshold = CIRCU
 
   const tripped = Array.from(byHost.values())
     .filter((item) => item.failures >= threshold)
+    .map((item) => ({
+      ...item,
+      egress_profiles: Array.from(item.egress_profiles).sort(),
+    }))
     .sort((a, b) => {
       if (b.failures !== a.failures) return b.failures - a.failures;
       return a.host.localeCompare(b.host);
@@ -544,7 +634,7 @@ function readHttpAudit(args, { readAttackSurfaceStrict = null } = {}) {
     version: 1,
     target_domain: domain,
     surface_id: surface ? surface.id : null,
-    summary: summarizeHttpAuditRecords(records, { surface, limit }),
+    summary: summarizeHttpAuditRecords(records, { surface, limit, targetDomain: domain }),
     circuit_breaker_summary: buildCircuitBreakerSummary(records, { surface }),
   }, null, 2);
 }
@@ -557,6 +647,7 @@ module.exports = {
   headerNamesFromInput,
   importHttpTraffic,
   isCircuitBreakerFailure,
+  isNetworkUnreachableRecord,
   normalizeHttpAuditRecord,
   normalizeImportedTrafficEntry,
   normalizeTrafficImportEntries,
@@ -566,6 +657,7 @@ module.exports = {
   readHttpAuditRecordsFromJsonl,
   readTrafficRecordsFromJsonl,
   summarizeHttpAuditRecords,
+  summarizeGeofenceWarnings,
   summarizeTrafficRecords,
   trafficRecordKey,
 };

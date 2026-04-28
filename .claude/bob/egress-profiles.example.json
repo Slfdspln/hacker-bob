@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "name": "default",
+      "proxy_url": null,
+      "region": null,
+      "description": "Direct connection from this machine.",
+      "enabled": true
+    },
+    {
+      "name": "gr-residential",
+      "proxy_url": "${BOB_EGRESS_GR_RESIDENTIAL_PROXY}",
+      "region": "GR",
+      "description": "Example operator-managed profile for Greece. Set the env var before use.",
+      "enabled": false
+    }
+  ]
+}

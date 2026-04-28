@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-04-28
+
+- Added operator-controlled egress profiles under `.claude/bob/`, including a safe example config, installer-preserved operator config, and `/bob-egress` management commands for listing, adding, testing, enabling, disabling, and removing profiles.
+- Extended `bounty_http_scan` with optional `egress_profile` support, proxy-backed `http`, `https`, `socks5`, and `socks5h` scanning through `proxy-agent`, early profile validation, credential redaction, and audit fields for `egress_profile` and `egress_region`.
+- Added geofence/reachability visibility for repeated first-party network failures through HTTP audit summaries, circuit-breaker summaries, pipeline analytics, `/bob-status`, `/bob-debug --deep`, and hunter briefs.
+- Updated `/bob-hunt` so `--egress <profile>` is passed through AUTH, hunter, chain, verifier, and evidence prompts while keeping profile switching explicit and operator-controlled.
+- Updated install, doctor, uninstall, packaging, and release checks so the egress command, helper, config example, runtime dependency, and package metadata are shipped and validated.
 - Changed `/bob-hunt` so zero-reportable VERIFY results still close through SKIP grading and a no-findings report instead of stopping at VERIFY.
 - Added hunter guardrails for repeated `INTERNAL_ERROR` host failures and explicit `chain_notes` length truncation before wave handoff writes.
 - Added required force-merge reasons to wave reconciliation and pipeline analytics so debug attribution survives without transcript context.

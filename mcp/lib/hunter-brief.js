@@ -477,7 +477,7 @@ function readHunterBrief(args) {
     { surface: surfaceObj },
   );
   const auditRecords = readHttpAuditRecordsFromJsonl(domain);
-  const auditSummary = summarizeHttpAuditRecords(auditRecords, { surface: surfaceObj });
+  const auditSummary = summarizeHttpAuditRecords(auditRecords, { surface: surfaceObj, targetDomain: domain });
   const circuitBreakerSummary = buildCircuitBreakerSummary(auditRecords, { surface: surfaceObj });
   const intelHints = summarizePublicIntelForSurface(domain, surfaceObj);
   const staticScanHints = summarizeStaticScanHints(domain, { surface: surfaceObj });

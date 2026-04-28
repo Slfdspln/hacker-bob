@@ -11,6 +11,7 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 const serverModule = require("../mcp/server.js");
+const egressProfiles = require("../mcp/lib/egress-profiles.js");
 const {
   TOOL_HANDLERS,
 } = require("../mcp/lib/dispatch.js");
@@ -60,6 +61,8 @@ const {
   readToolTelemetry,
   toolTelemetryPath,
 } = require("../mcp/lib/tool-telemetry.js");
+
+const ROOT = path.join(__dirname, "..");
 
 const {
   TOOLS,
@@ -234,6 +237,34 @@ function withEnv(overrides, fn) {
       } else {
         process.env[key] = previous[key];
       }
+    }
+  };
+
+  try {
+    const result = fn();
+    if (result && typeof result.then === "function") {
+      return result.finally(cleanup);
+    }
+    cleanup();
+    return result;
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+function withRepoEgressConfig(document, fn) {
+  const filePath = egressProfiles.egressProfilesPath(ROOT);
+  const existed = fs.existsSync(filePath);
+  const previous = existed ? fs.readFileSync(filePath, "utf8") : null;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+
+  const cleanup = () => {
+    if (existed) {
+      fs.writeFileSync(filePath, previous, "utf8");
+    } else {
+      fs.rmSync(filePath, { force: true });
     }
   };
 
@@ -658,6 +689,7 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(byName.get("bounty_read_http_audit").inputSchema.required[0], "target_domain");
   assert.equal(byName.get("bounty_start_wave").inputSchema.properties.assignments.type, "array");
   assert.equal(byName.get("bounty_http_scan").inputSchema.properties.url.type, "string");
+  assert.equal(byName.get("bounty_http_scan").inputSchema.properties.egress_profile.type, "string");
   assert.deepEqual(byName.get("bounty_http_scan").inputSchema.required, ["method", "url", "target_domain"]);
   assert.equal(TOOL_MANIFEST.bounty_read_http_audit.mutating, false);
   assert.equal(byName.get("bounty_write_chain_attempt").inputSchema.properties.outcome.enum.includes("inconclusive"), true);
@@ -4403,7 +4435,19 @@ test("bounty_read_findings, bounty_list_findings, and bounty_wave_status return 
         message: "session state could not be read for HUNT -> CHAIN gating",
         error: `Missing session state: ${statePath(domain)}`,
       }],
-      http_audit: { total: 0, shown: 0, omitted: 0, cap: 0, by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 }, errors: 0, scope_blocked: 0, recent: [] },
+      http_audit: {
+        total: 0,
+        shown: 0,
+        omitted: 0,
+        cap: 0,
+        by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 },
+        errors: 0,
+        scope_blocked: 0,
+        network_unreachable_target: 0,
+        egress: { by_profile: {}, by_region: {} },
+        geofence_warning: { threshold: 3, warning: false, code: null, note: null, hosts: [] },
+        recent: [],
+      },
       traffic: { total: 0, shown: 0, omitted: 0, cap: 0, authenticated_count: 0, by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 }, recent: [] },
       circuit_breaker: { threshold: 3, tripped_hosts: [], tripped_count: 0, note: null },
       findings_summary: [],
@@ -4485,7 +4529,19 @@ test("bounty_list_findings and bounty_wave_status keep their external shapes whi
         message: "session state could not be read for HUNT -> CHAIN gating",
         error: `Missing session state: ${statePath(domain)}`,
       }],
-      http_audit: { total: 0, shown: 0, omitted: 0, cap: 0, by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 }, errors: 0, scope_blocked: 0, recent: [] },
+      http_audit: {
+        total: 0,
+        shown: 0,
+        omitted: 0,
+        cap: 0,
+        by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 },
+        errors: 0,
+        scope_blocked: 0,
+        network_unreachable_target: 0,
+        egress: { by_profile: {}, by_region: {} },
+        geofence_warning: { threshold: 3, warning: false, code: null, note: null, hosts: [] },
+        recent: [],
+      },
       traffic: { total: 0, shown: 0, omitted: 0, cap: 0, authenticated_count: 0, by_status_class: { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 }, recent: [] },
       circuit_breaker: { threshold: 3, tripped_hosts: [], tripped_count: 0, note: null },
       findings_summary: [
@@ -5916,7 +5972,8 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       const records = readHttpAuditRecordsFromJsonl(domain);
       assert.equal(records.length, 4);
       assert.deepEqual(records.map((record) => record.status), [200, 403, null, null]);
-      assert.deepEqual(records.map((record) => record.scope_decision), ["allowed", "allowed", "request_error", "blocked"]);
+      assert.deepEqual(records.map((record) => record.scope_decision), ["allowed", "allowed", "network_unreachable_target", "blocked"]);
+      assert.deepEqual(records.map((record) => record.egress_profile), ["default", "default", "default", "default"]);
       assert.equal(records[0].wave, "w1");
       assert.equal(records[0].agent, "a1");
       assert.equal(records[0].surface_id, "surface-a");
@@ -5926,7 +5983,107 @@ test("bounty_http_scan writes audit entries for success, HTTP error, timeout, an
       assert.equal(audit.summary.shown, 2);
       assert.equal(audit.summary.by_status_class["4xx"], 1);
       assert.equal(audit.summary.scope_blocked, 1);
+      assert.equal(audit.summary.network_unreachable_target, 1);
+      assert.equal(audit.summary.egress.by_profile.default, 4);
       assert.ok(fs.existsSync(httpAuditJsonlPath(domain)));
+    });
+  });
+});
+
+test("bounty_http_scan records selected egress profile and passes a proxy agent without storing proxy URLs", async () => {
+  await withTempHome(async () => {
+    const domain = "example.com";
+    const rawProxySecret = ["raw", "proxy", "secret"].join("-");
+    const proxyAuthority = ["user", rawProxySecret].join(":");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        {
+          name: "gr-residential",
+          proxy_url: "${BOB_EGRESS_GR_RESIDENTIAL_PROXY}",
+          region: "GR",
+          description: "Greece operator profile",
+          enabled: true,
+        },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withEnv({ BOB_EGRESS_GR_RESIDENTIAL_PROXY: ["http://", proxyAuthority, "@127.0.0.1:8080"].join("") }, async () => {
+        let sawAgent = false;
+        await withMockSafeFetch((url, requestOptions) => {
+          sawAgent = !!requestOptions.agent;
+          return { status: 200, statusText: "OK", body: "ok" };
+        }, async () => {
+          const result = await executeTool("bounty_http_scan", {
+            target_domain: domain,
+            method: "GET",
+            url: "https://example.com/ok",
+            egress_profile: "gr-residential",
+            response_mode: "status_only",
+          });
+
+          assert.equal(result.ok, true);
+          assert.equal(result.data.egress_profile, "gr-residential");
+          assert.equal(result.data.egress_region, "GR");
+          assert.equal(sawAgent, true);
+
+          const records = readHttpAuditRecordsFromJsonl(domain);
+          assert.equal(records.length, 1);
+          assert.equal(records[0].egress_profile, "gr-residential");
+          assert.equal(records[0].egress_region, "GR");
+          const audit = JSON.parse(readHttpAudit({ target_domain: domain }));
+          assert.equal(audit.summary.egress.by_profile["gr-residential"], 1);
+          assert.equal(audit.summary.egress.by_region.GR, 1);
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+          assert.doesNotMatch(JSON.stringify(records), new RegExp(rawProxySecret));
+          assert.doesNotMatch(JSON.stringify(audit), new RegExp(rawProxySecret));
+        });
+      });
+    });
+  });
+});
+
+test("bounty_http_scan rejects invalid egress profiles before sending network requests and redacts proxy credentials", async () => {
+  await withTempHome(async () => {
+    const rawProxySecret = ["do", "not", "leak", "proxy", "secret"].join("-");
+    const proxyAuthority = ["user", rawProxySecret].join(":");
+    const document = {
+      version: 1,
+      profiles: [
+        egressProfiles.defaultEgressProfile(),
+        { name: "disabled", proxy_url: "${BOB_EGRESS_DISABLED_PROXY}", region: "EU", description: null, enabled: false },
+        { name: "missing-env", proxy_url: "${BOB_EGRESS_MISSING_PROXY}", region: "EU", description: null, enabled: true },
+        { name: "unsupported", proxy_url: ["ftp://", proxyAuthority, "@proxy.example:21"].join(""), region: "EU", description: null, enabled: true },
+        { name: "malformed", proxy_url: ["http://", proxyAuthority, "@"].join(""), region: "EU", description: null, enabled: true },
+      ],
+    };
+
+    await withRepoEgressConfig(document, async () => {
+      await withMockSafeFetch(() => {
+        throw new Error("network should not be reached");
+      }, async (requestedUrls) => {
+        for (const [profileName, pattern] of [
+          ["missing", /not found/],
+          ["disabled", /disabled/],
+          ["missing-env", /env var BOB_EGRESS_MISSING_PROXY is not set/],
+          ["unsupported", /unsupported egress proxy protocol: ftp:/],
+          ["malformed", /malformed/],
+        ]) {
+          const result = await executeTool("bounty_http_scan", {
+            target_domain: "example.com",
+            method: "GET",
+            url: "https://example.com/ok",
+            egress_profile: profileName,
+          });
+          assert.equal(result.ok, false, `${profileName} should fail`);
+          assert.equal(result.error.code, "INTERNAL_ERROR");
+          assert.match(result.error.message, pattern);
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(rawProxySecret));
+        }
+        assert.deepEqual(requestedUrls, []);
+      });
     });
   });
 });
@@ -6283,9 +6440,11 @@ test("bounty_import_http_traffic redacts persisted URLs and rejected reasons", (
 });
 
 test("redactUrlSensitiveValues redacts query values, credentials, and fragments", () => {
+  const inputUrl = ["https://", ["alice", "secret"].join(":"), "@example.com/path?token=abc&id=123#frag"].join("");
+  const expectedUrl = ["https://", ["REDACTED", "REDACTED"].join(":"), "@example.com/path?token=REDACTED&id=REDACTED"].join("");
   assert.equal(
-    redactUrlSensitiveValues("https://alice:secret@example.com/path?token=abc&id=123#frag"),
-    "https://REDACTED:REDACTED@example.com/path?token=REDACTED&id=REDACTED",
+    redactUrlSensitiveValues(inputUrl),
+    expectedUrl,
   );
   assert.equal(redactUrlSensitiveValues("not a url token=abc"), "not a url token=abc");
 });
@@ -6553,6 +6712,37 @@ test("circuit breaker summary marks repeated failures per host without blocking 
     assert.equal(brief.circuit_breaker_summary.tripped_count, 1);
     assert.equal(brief.circuit_breaker_summary.tripped_hosts[0].host, `api.${domain}`);
     assert.doesNotMatch(JSON.stringify(brief.circuit_breaker_summary), new RegExp(`app\\.${domain}`));
+  });
+});
+
+test("pipeline analytics surfaces egress and geofence warnings from HTTP audit", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: null });
+
+    for (let index = 0; index < 3; index += 1) {
+      appendHttpAuditRecord({
+        version: 1,
+        ts: new Date(Date.now() + index).toISOString(),
+        target_domain: domain,
+        method: "GET",
+        url: `https://api.${domain}/blocked-${index}`,
+        host: `api.${domain}`,
+        path: `/blocked-${index}`,
+        status: null,
+        error: "timeout after 1000ms",
+        scope_decision: "network_unreachable_target",
+        egress_profile: "default",
+        egress_region: null,
+      });
+    }
+
+    const analytics = JSON.parse(readPipelineAnalytics({ target_domain: domain }));
+    assert.equal(analytics.sessions[0].egress.by_profile.default, 3);
+    assert.equal(analytics.sessions[0].geofence_warnings.warning, true);
+    assert.equal(analytics.sessions[0].geofence_warnings.code, "network_unreachable_target");
+    assert.ok(analytics.bottlenecks.some((item) => item.code === "network_unreachable_target"));
+    assert.doesNotMatch(JSON.stringify(analytics), /proxy/i);
   });
 });
 

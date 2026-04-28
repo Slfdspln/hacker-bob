@@ -67,12 +67,14 @@ Surface evidence status from `bounty_read_pipeline_analytics.data.sessions[0].ev
 - `unknown` when analytics and optional read-only confirmation cannot determine evidence readiness.
 
 If evidence is `missing/invalid` for final reportable findings, list it as a blocking issue. Use `/bob-hunt resume <target_domain>` as the next command when analytics gives a clear `missing_evidence` blocker or missing finding IDs; otherwise use `/bob-debug <target_domain>` to inspect the unclear state.
+If analytics includes `egress` or `geofence_warnings`, include recent egress profile names and any `network_unreachable_target` warning in the blocking issue line. Recommend `/bob-hunt --egress <profile> resume <target_domain>` only when the operator has chosen the profile.
 
 ## Final Answer Shape
 Always include:
 - Target and phase.
 - Wave state: current wave, pending wave, readiness if known.
 - Findings, verification, evidence status, grade, and report presence.
+- Egress profile summary and geofence warning when visible from analytics.
 - If the update cache says a Bob update is available, include `Update: Hacker Bob <version> available. Run /bob-update.`
 - Any blocking issue visible from status reads.
 - Next command: usually `/bob-hunt resume <target_domain>`, `/bob-debug <target_domain>`, `/bob-debug --deep <target_domain>`, or no action needed.

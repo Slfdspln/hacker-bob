@@ -12,6 +12,10 @@ const {
 const {
   defaultClaudeSettings,
 } = require("../mcp/lib/claude-config.js");
+const {
+  ensureEgressProfilesConfig,
+  ensureEgressProfilesExample,
+} = require("../mcp/lib/egress-profiles.js");
 
 const HOOK_FILES = Object.freeze([
   "scope-guard.sh",
@@ -20,6 +24,7 @@ const HOOK_FILES = Object.freeze([
   "bounty-statusline.js",
   "hunter-subagent-stop.js",
   "bob-update-lib.js",
+  "bob-egress.js",
   "bob-update.js",
   "bob-check-update.js",
   "bob-check-update-worker.js",
@@ -30,6 +35,7 @@ const EXECUTABLE_HOOKS = Object.freeze([
   "scope-guard-mcp.sh",
   "session-write-guard.sh",
   "hunter-subagent-stop.js",
+  "bob-egress.js",
   "bob-update.js",
   "bob-check-update.js",
   "bob-check-update-worker.js",
@@ -84,6 +90,39 @@ function copyDirRecursive(sourceDir, destinationDir, predicate) {
     copied.push(path.relative(destinationDir, destination));
   }
   return copied;
+}
+
+function copyNodeModulePackage(sourceRoot, targetNodeModules, packageName, copied = new Set()) {
+  if (copied.has(packageName)) return [];
+  copied.add(packageName);
+
+  const sourcePackageDir = path.join(sourceRoot, "node_modules", ...packageName.split("/"));
+  if (!fs.existsSync(sourcePackageDir)) {
+    return [];
+  }
+  const destinationPackageDir = path.join(targetNodeModules, ...packageName.split("/"));
+  const copiedFiles = copyDirRecursive(sourcePackageDir, destinationPackageDir, (relative) => (
+    !relative.split(path.sep).includes("node_modules")
+  ));
+
+  let manifest = null;
+  try {
+    manifest = readJsonIfExists(path.join(sourcePackageDir, "package.json"), null);
+  } catch {
+    manifest = null;
+  }
+  const dependencies = manifest && manifest.dependencies && typeof manifest.dependencies === "object"
+    ? Object.keys(manifest.dependencies)
+    : [];
+  for (const dependency of dependencies) {
+    copiedFiles.push(...copyNodeModulePackage(sourceRoot, targetNodeModules, dependency, copied));
+  }
+  return copiedFiles;
+}
+
+function copyRuntimeNodeDependencies(sourceRoot, targetAbs) {
+  const targetNodeModules = path.join(targetAbs, "mcp", "node_modules");
+  return copyNodeModulePackage(sourceRoot, targetNodeModules, "proxy-agent");
 }
 
 function removeIfExists(filePath) {
@@ -162,7 +201,7 @@ function installProject(projectDir, options = {}) {
   removeRecursiveIfExists(path.join(claudeDir, "skills", "bountyagent"));
   removeRecursiveIfExists(path.join(claudeDir, "skills", "bountyagentstatus"));
   removeRecursiveIfExists(path.join(claudeDir, "skills", "bountyagentdebug"));
-  for (const command of ["bob-update.md"]) {
+  for (const command of ["bob-update.md", "bob-egress.md"]) {
     copyFile(
       path.join(sourceRoot, ".claude", "commands", command),
       path.join(claudeDir, "commands", command),
@@ -223,6 +262,7 @@ function installProject(projectDir, options = {}) {
     path.join(mcpDir, "lib", "tools"),
     (name) => name.endsWith(".js"),
   );
+  const runtimeNodeDependencies = copyRuntimeNodeDependencies(sourceRoot, targetAbs);
 
   const policyReplay = copyDirRecursive(
     path.join(sourceRoot, "testing", "policy-replay"),
@@ -240,6 +280,8 @@ function installProject(projectDir, options = {}) {
   writeJson(settingsPath, mergeSettings(readJsonIfExists(settingsPath, {}), bobSettings));
 
   fs.mkdirSync(path.join(os.homedir(), "bounty-agent-sessions"), { recursive: true });
+  ensureEgressProfilesExample(targetAbs);
+  const egressConfig = ensureEgressProfilesConfig(targetAbs);
 
   const installedAt = new Date().toISOString();
   fs.writeFileSync(path.join(claudeDir, "bob", "VERSION"), `${manifest.version}\n`, "utf8");
@@ -263,7 +305,9 @@ function installProject(projectDir, options = {}) {
     bypassTables: bypassTables.length,
     knowledge: knowledge.length,
     policyReplay: policyReplay.length,
+    runtimeNodeDependencies: runtimeNodeDependencies.length,
     patchrightAvailable: patchrightAvailable(targetAbs, sourceRoot),
+    egressConfigCreated: egressConfig.created,
   };
 }
 
@@ -271,7 +315,7 @@ function printInstallSummary(summary) {
   console.log(`Installing Hacker Bob ${summary.version} into ${summary.claudeDir}/`);
   console.log("");
   console.log(`  ${summary.agents} agent definitions`);
-  console.log("  command shim (/bob-update)");
+  console.log("  command shims (/bob-update, /bob-egress)");
   console.log("  bob-hunt + bob-status + bob-debug skills");
   console.log(`  ${summary.rules} rules`);
   console.log(`  ${summary.bypassTables} bypass tables`);
@@ -279,9 +323,11 @@ function printInstallSummary(summary) {
   console.log(`  ${summary.policyReplay} policy replay harness files`);
   console.log("  scope/session/update guard hooks + status line");
   console.log("  MCP runtime (mcp/server.js, auto-signup.js, redaction.js, lib/*.js, lib/tools/*.js)");
+  console.log(`  ${summary.runtimeNodeDependencies} MCP runtime dependency files`);
   console.log("  .mcp.json merged");
   console.log("  settings.json merged (permissions + hooks + statusLine)");
   console.log("  .claude/bob/VERSION and install.json");
+  console.log(`  .claude/bob/egress-profiles.json (${summary.egressConfigCreated ? "created" : "preserved"})`);
   console.log("  ~/bounty-agent-sessions/");
   console.log("");
   console.log("Dependency check:");
@@ -325,4 +371,5 @@ module.exports = {
   installProject,
   patchrightAvailable,
   printInstallSummary,
+  copyRuntimeNodeDependencies,
 };
