@@ -34,6 +34,19 @@ Adapters own host-specific packaging and ergonomics:
 Adapters may generate files from a shared role and policy model, but generated
 host files should not become the source of truth for runtime behavior.
 
+Shared role prompts must stay semantic. They may define Bob roles, phase
+ordering, handoff contracts, and MCP artifact rules, but host launch mechanics
+belong to adapters. The orchestrator prompt uses launch placeholders such as
+`{{SPAWN_HUNTER_AGENT}}`; the Claude renderer fills those with Claude named
+subagent calls, while the Codex renderer fills them with Codex worker-agent
+spawn instructions.
+
+Codex does not have Bob-specific named subagents. In Codex, `hunter-agent`,
+`recon-agent`, `grader`, and similar names are Bob logical roles rendered into
+`worker` agent prompts. Durable identity remains in MCP state through `wN`,
+`aN`, `surface_id`, and `handoff_token`; Codex host agent IDs and UI nicknames
+are execution metadata only.
+
 ## Capability Rule
 
 Host lifecycle hooks are guardrails, not correctness boundaries. In particular,

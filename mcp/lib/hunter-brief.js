@@ -37,6 +37,13 @@ const {
   summarizeStaticScanHints,
 } = require("./static-artifacts.js");
 const {
+  loadBobSpec,
+  summarizeBobSpecForBrief,
+} = require("./bob-spec.js");
+const {
+  summarizeRpcPoolForBrief,
+} = require("./evm-rpc-pool.js");
+const {
   filterExclusionsByHosts,
 } = require("./scope.js");
 const {
@@ -70,12 +77,16 @@ const HUNTER_BRIEF_SURFACE_ARRAY_LIMITS = Object.freeze({
   bug_class_hints: 20,
   high_value_flows: 20,
   evidence: 25,
+  fork_rpc_pool: 6,
 });
 const HUNTER_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
   id: 120,
   priority: 40,
   original_priority: 40,
   surface_type: 80,
+  chain_family: 40,
+  chain_id: 20,
+  foundry_harness_path: 240,
   name: 160,
   title: 160,
   description: 500,
@@ -83,6 +94,10 @@ const HUNTER_BRIEF_SURFACE_SCALAR_LIMITS = Object.freeze({
 const HUNTER_BRIEF_ARRAY_ITEM_MAX_CHARS = 500;
 const HUNTER_BRIEF_RANKING_REASON_LIMIT = 10;
 const HUNTER_BRIEF_RANKING_REASON_MAX_CHARS = 160;
+
+// Default brief message returned when bob-spec.json is absent. The loader is
+// real (mcp/lib/bob-spec.js); this message is the empty-state fallback.
+const BOB_SPEC_ABSENT_MESSAGE = "bob-spec.json not present in the session directory; the smart_contract anti-stop rule still applies (record at least one bypass_attempts[] entry citing the trust assumption you actually attempted to break, or record a finding).";
 
 function resolveBypassTable(techStack) {
   if (!Array.isArray(techStack)) return BYPASS_TABLE_DEFAULT;
@@ -498,11 +513,14 @@ function readHunterBrief(args) {
     ranking_summary: surfaceObj.ranking || null,
     intel_hints: intelHints,
     static_scan_hints: staticScanHints,
+    bob_spec_status: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
+    rpc_pool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
     auth_profiles_hint: "Call `bounty_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bounty_http_scan`.",
   }, null, 2);
 }
 
 module.exports = {
+  BOB_SPEC_ABSENT_MESSAGE,
   readHunterBrief,
   hunterKnowledgeCandidatePaths,
   resolveBypassTable,

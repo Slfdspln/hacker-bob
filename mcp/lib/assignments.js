@@ -47,12 +47,18 @@ function loadWaveAssignments(domain, waveNumber) {
     const handoffTokenSha256 = typeof assignment.handoff_token_sha256 === "string" && assignment.handoff_token_sha256.trim()
       ? assignment.handoff_token_sha256.trim()
       : null;
+    // surface_type is captured at start_wave time from attack_surface.json
+    // and persisted in the (MCP-owned) assignment file. The completion gate
+    // reads from here, not from the agent-writable attack_surface.json.
+    const surfaceType = typeof assignment.surface_type === "string" && assignment.surface_type.trim() !== ""
+      ? assignment.surface_type.trim()
+      : null;
     if (assignmentByAgent.has(agent)) {
       throw new Error(`Duplicate assignment for ${agent} in ${assignmentsPath}`);
     }
-    const normalizedAssignment = handoffTokenSha256
-      ? { agent, surface_id: surfaceId, handoff_token_sha256: handoffTokenSha256 }
-      : { agent, surface_id: surfaceId };
+    const normalizedAssignment = { agent, surface_id: surfaceId };
+    if (handoffTokenSha256) normalizedAssignment.handoff_token_sha256 = handoffTokenSha256;
+    if (surfaceType) normalizedAssignment.surface_type = surfaceType;
     assignments.push(normalizedAssignment);
     assignmentByAgent.set(agent, normalizedAssignment);
   }

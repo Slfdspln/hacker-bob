@@ -48,6 +48,42 @@ module.exports = Object.freeze({
           "maxLength": 300
         }
       },
+      "blocked_harness_runs": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "required": ["kind", "harness", "reason"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["foundry_fork", "rpc_endpoint", "fuzzer", "symbolic_solver", "mock_dependency", "external_api", "other"]
+            },
+            "harness": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 240 },
+            "needed_for": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "bypass_attempts": {
+        "type": "array",
+        "maxItems": 30,
+        "items": {
+          "type": "object",
+          "required": ["condition", "attempt_summary", "outcome"],
+          "properties": {
+            "condition": { "type": "string", "minLength": 4, "maxLength": 120 },
+            "attempt_summary": { "type": "string", "minLength": 30, "maxLength": 500 },
+            "outcome": {
+              "type": "string",
+              "enum": ["no_finding", "partial_evidence", "finding_recorded", "blocked"]
+            },
+            "finding_id": { "type": "string", "pattern": "^F-[1-9][0-9]*$" }
+          },
+          "additionalProperties": false
+        }
+      },
       "content": {
         "type": "string"
       },

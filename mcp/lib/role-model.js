@@ -45,6 +45,36 @@ const ROLE_DEFINITIONS = Object.freeze({
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter.md"),
     mcp_role_bundles: Object.freeze(["hunter"]),
   }),
+  "hunter-evm": Object.freeze({
+    id: "hunter-evm",
+    family: "hunter",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-evm.md"),
+    mcp_role_bundles: Object.freeze(["hunter"]),
+  }),
+  "hunter-svm": Object.freeze({
+    id: "hunter-svm",
+    family: "hunter",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-svm.md"),
+    mcp_role_bundles: Object.freeze(["hunter"]),
+  }),
+  "hunter-move": Object.freeze({
+    id: "hunter-move",
+    family: "hunter",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-move.md"),
+    mcp_role_bundles: Object.freeze(["hunter"]),
+  }),
+  "hunter-substrate": Object.freeze({
+    id: "hunter-substrate",
+    family: "hunter",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-substrate.md"),
+    mcp_role_bundles: Object.freeze(["hunter"]),
+  }),
+  "hunter-cosmwasm": Object.freeze({
+    id: "hunter-cosmwasm",
+    family: "hunter",
+    prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-cosmwasm.md"),
+    mcp_role_bundles: Object.freeze(["hunter"]),
+  }),
   chain: Object.freeze({
     id: "chain",
     prompt_body: path.join(ROLE_PROMPT_DIR, "chain.md"),
