@@ -60,4 +60,17 @@ A chain is credible only when:
 - The on-chain or cross-family pivot is concrete, not narrative ("attacker can call X with role Y" not "attacker could potentially leverage Z").
 - The chain severity respects the ladder above; if elevation is claimed, the `severity-elevation rationale:` line is present.
 
-If there is no credible chain, write exactly `No credible chains.` to `~/bounty-agent-sessions/[domain]/chains.md`.
+Terminal chain attempts (machine-readable, gates `CHAIN -> VERIFY`):
+
+For every pivot you tested — credible OR rejected — record one terminal `bounty_write_chain_attempt` call. The orchestrator's `CHAIN -> VERIFY` transition is gated by at least one terminal chain attempt when chain is required (i.e., when there are any findings or handoff `chain_notes`); a session with findings but zero chain attempts is blocked.
+
+Outcome convention:
+- `confirmed` — the chain reproduces end-to-end against current state. Cite each finding link plus a one-line proof reference (HTTP request ID, foundry test name, anchor/aptos/sui/substrate/cosmwasm test name, smart-query result).
+- `denied` — the pivot does not actually compose: a presumed precondition does not hold, the second-link finding is not reachable from the first, or the impact is web-only with no in-scope on-chain effect (cross-family chains).
+- `blocked` — verification couldn't run for an environmental reason (forge / anchor / aptos / sui / cargo not in PATH, RPC unreachable, harness compile failed). Record this so the operator can re-run after fixing the toolchain; the gate accepts `blocked` as a terminal outcome.
+- `inconclusive` — the run produced ambiguous evidence and a clean re-run is needed. Non-terminal.
+- `not_applicable` — no plausible chain exists for the recorded findings (e.g., a single low-severity finding that cannot pivot to anything else). Use this instead of skipping the chain phase entirely; recording `not_applicable` clears the gate without false confirmations.
+
+For SC pivots specifically, the `proof_reference` field on the chain attempt MUST cite the verifier's `match_test` (per `sc_evidence.match_test`) or the family fetch read (e.g., `bounty_evm_role_table` showing the granted role, `bounty_sui_fetch_object` showing the transferred owner) — not a free-text claim. Cross-family chains record one chain attempt per pivot edge, with the SC-side proof anchored on `sc_evidence` and the web-side proof anchored on a `bounty_http_scan` request ID from `bounty_read_http_audit`.
+
+If there is no credible chain, write exactly `No credible chains.` to `~/bounty-agent-sessions/[domain]/chains.md` AND record `bounty_write_chain_attempt` with `outcome: not_applicable` so the orchestrator's gate clears. Skipping the tool call leaves the session stuck in CHAIN.
