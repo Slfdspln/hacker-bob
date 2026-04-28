@@ -298,3 +298,91 @@ Sherlock's loss thresholds (>1% AND >$10 for High; >0.01% AND >$10 for Medium)
 gate whether a Bob-internal `high` finding is reportable on Sherlock at all.
 The verifier records Bob-internal severity and the platform-specific tier
 side-by-side.
+
+## Pipeline integration: phase gates, chain attempts, evidence packs, egress
+
+Beyond `bob-spec.yaml` and the per-family hunter / verifier / chain / reporter
+prompts, SC findings flow through four shared mechanisms introduced in main:
+
+### 1. Phase gates (`mcp/lib/phase-gates.js`)
+
+The orchestrator's `bounty_transition_phase` enforces gates between phases.
+Three of the four matter for SC findings:
+
+- **HUNT → CHAIN.** Blocks if `pending_wave` is set or any HIGH/CRITICAL
+  surface is unexplored. SC surfaces with `surface_status: partial` and at
+  least one `bypass_attempts[]` entry are marked explored by `apply-wave-merge`,
+  satisfying the gate. Operators with persistently blocked harness runs may
+  pass `override_reason`, but the standard path is to fix the toolchain and
+  re-run.
+- **CHAIN → VERIFY.** Blocks if findings exist (or handoff `chain_notes`
+  exist) and zero terminal `bounty_write_chain_attempt` records have been
+  written. The chain-builder MUST record at least one terminal outcome
+  (`confirmed`, `denied`, `blocked`, or `not_applicable`) per pivot — see
+  `prompts/roles/chain.md` for the SC pivot conventions.
+- **VERIFY → GRADE.** Blocks if any final-reportable finding (medium severity
+  or higher) lacks a valid evidence pack. The evidence-agent owns this; SC
+  findings produce evidence packs via the family runners (see below).
+
+### 2. Chain attempts × SC pivots
+
+The chain-builder (`prompts/roles/chain.md`) writes one terminal chain attempt
+per tested pivot via `bounty_write_chain_attempt`. For SC pivots specifically,
+the `proof_reference` field cites the verifier's `match_test` (per
+`sc_evidence.match_test`) or a family fetch read (e.g., `bounty_evm_role_table`
+showing the granted role, `bounty_sui_fetch_object` showing the transferred
+owner) — never a free-text claim.
+
+Cross-family chains (e.g., `subdomain_takeover -> frontend_wallet_drain`)
+record one chain attempt per pivot edge. The web-side proof anchors on a
+`bounty_http_scan` request ID from `bounty_read_http_audit`; the SC-side
+proof anchors on `sc_evidence`.
+
+### 3. Evidence packs × SC findings
+
+The evidence-agent (`prompts/roles/evidence.md` source, `.claude/agents/
+evidence-agent.md` artifact) runs after final verification when reportables
+exist. It dispatches by `finding.surface_type`:
+
+- **`web` (or null legacy):** replays via `bounty_http_scan` with
+  `egress_profile`, samples request/response shape (≤10 representative
+  samples), redacts secrets/PII.
+- **`smart_contract`:** re-runs the family runner against a FRESH chain
+  reference (no `fork_block` pin), captures the test stdout excerpt, and
+  builds the pack with a family-specific `sample_type`:
+
+| chain_family | runner | sample_type | trust-map reads |
+|---|---|---|---|
+| evm | bounty_foundry_run | evm_foundry_run | bounty_evm_role_table / bounty_evm_storage_read / bounty_evm_call |
+| svm | bounty_anchor_run | svm_anchor_run | bounty_svm_fetch_program / bounty_svm_fetch_account |
+| aptos | bounty_aptos_run | aptos_move_test | bounty_aptos_fetch_resource / bounty_aptos_fetch_module |
+| sui | bounty_sui_run | sui_move_test | bounty_sui_fetch_object / bounty_sui_fetch_package |
+| substrate | bounty_substrate_run | substrate_ink_test | bounty_substrate_fetch_storage / bounty_substrate_fetch_runtime |
+| cosmwasm | bounty_cosmwasm_run | cosmwasm_cw_multi_test | bounty_cosmwasm_fetch_contract / bounty_cosmwasm_smart_query |
+
+`representative_samples[]` for SC findings carry `runner`, `harness_path`,
+`match_test`, `fork_block_used`, `test_stdout_excerpt` (≤1000 chars, the
+failing assertion plus 2-3 lines of context), and `state_delta_summary`. The
+`replay_summary` anchors the verifier's "verified at block N on chain X"
+reasoning so the grader and reporter can quote it.
+
+If the runner returns a tooling-blocker reason (`*_not_in_path`,
+`*_dependency_missing`, `move_compile_failed`, `cargo_compile_failed`,
+`rpc_unreachable`), the evidence pack still gets written but with the
+verifier's earlier reasoning text in `representative_samples[]` — the gate
+checks pack EXISTENCE, not pack quality. The verifier owns reportability.
+
+### 4. Egress profiles × SC RPC traffic
+
+`bounty_http_scan` honors the operator's `egress_profile` for HTTP traffic
+to the target. SC RPC clients (`bounty_evm_*`, `bounty_svm_*`,
+`bounty_aptos_*`, `bounty_sui_*`, `bounty_substrate_*`, `bounty_cosmwasm_*`)
+are NOT subject to egress policy — chain RPCs are operator-curated
+infrastructure (`BOB_<FAMILY>_RPCS_<NETWORK>` env vars at MCP server start),
+distinct from the user-target HTTP traffic egress profiles are designed to
+constrain.
+
+When SC findings have an off-chain web side (e.g., a leaked API key that
+controls oracle pricing on-chain), the off-chain HTTP step still flows
+through `bounty_http_scan` and honors the egress profile; only the chain
+RPC reads are exempt.
