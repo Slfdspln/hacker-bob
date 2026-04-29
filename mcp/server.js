@@ -18,6 +18,8 @@
 //           bounty_list_auth_profiles, bounty_read_wave_handoffs,
 //           bounty_write_chain_attempt, bounty_read_chain_attempts,
 //           bounty_write_evidence_packs, bounty_read_evidence_packs,
+//           bounty_read_session_summary, bounty_set_operator_note,
+//           bounty_clear_operator_note,
 //           bounty_read_tool_telemetry, bounty_read_pipeline_analytics
 
 const { redactUrlSensitiveValues } = require("./redaction.js");
@@ -78,12 +80,17 @@ const {
 } = require("./lib/storage.js");
 const {
   compactSessionState,
+  clearOperatorNote,
   initSession,
   normalizeSessionStateDocument,
   readSessionState,
+  setOperatorNote,
   readStateSummary,
   transitionPhase,
 } = require("./lib/session-state.js");
+const {
+  readSessionSummary,
+} = require("./lib/session-summary.js");
 const {
   buildCoverageSummaryForSurface,
   computeCoverageRequeueSurfaceIds,
@@ -254,7 +261,9 @@ module.exports = {
   readScopeExclusions,
   readSessionArtifactSummary,
   readSessionState,
+  readSessionSummary,
   readStateSummary,
+  setOperatorNote,
   compactSessionState,
   readVerificationRound,
   recordFinding,
@@ -278,6 +287,7 @@ module.exports = {
   normalizeStringArray,
   writeFileAtomic,
   writeChainAttempt,
+  clearOperatorNote,
   executeTool,
   startServer,
 };

@@ -51,6 +51,7 @@ const SESSION_PUBLIC_STATE_FIELDS = [
   "scope_exclusions",
   "hold_count",
   "auth_status",
+  "operator_note",
 ];
 
 const VERIFICATION_ROUND_FILE_MAP = {
