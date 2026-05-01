@@ -40,6 +40,7 @@ const {
 } = require("./coverage.js");
 const { readAttackSurfaceStrict } = require("./attack-surface.js");
 const {
+  isAssignableSurfaceLead,
   promoteSurfaceLeadsInternal,
   readSurfaceLeadsDocument,
   recordSurfaceLeadsInternal,
@@ -375,7 +376,7 @@ function waveStatus(args) {
     surfaceLeadsSummary = {
       total: surfaceLeads.leads.length,
       high_confidence_unpromoted: surfaceLeads.leads.filter(
-        (lead) => lead.status !== "promoted" && lead.confidence === "high",
+        (lead) => lead.status !== "promoted" && lead.confidence === "high" && isAssignableSurfaceLead(lead),
       ).length,
       promoted: surfaceLeads.leads.filter((lead) => lead.status === "promoted").length,
     };
@@ -705,44 +706,46 @@ function writeWaveHandoff(args) {
     throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, "content must be a string");
   }
 
-  const assignment = validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
-  const provenance = validateHandoffToken(assignment, args.handoff_token);
-  const surfaceLeadResult = recordSurfaceLeadsInternal(domain, Array.isArray(args.surface_leads) ? args.surface_leads : [], {
-    source: "hunter_handoff",
-    source_wave: wave,
-    source_agent: agent,
-    source_surface_id: surfaceId,
-  });
+  return withSessionLock(domain, () => {
+    const assignment = validateAssignedWaveAgentSurface(domain, wave, agent, surfaceId);
+    const provenance = validateHandoffToken(assignment, args.handoff_token);
+    const surfaceLeadResult = recordSurfaceLeadsInternal(domain, Array.isArray(args.surface_leads) ? args.surface_leads : [], {
+      source: "hunter_handoff",
+      source_wave: wave,
+      source_agent: agent,
+      source_surface_id: surfaceId,
+    });
 
-  const handoff = {
-    target_domain: domain,
-    wave,
-    agent,
-    surface_id: surfaceId,
-    surface_status: surfaceStatus,
-    provenance,
-    summary,
-    chain_notes: chainNotes,
-    dead_ends: normalizeStringArray(args.dead_ends, "dead_ends"),
-    waf_blocked_endpoints: normalizeStringArray(args.waf_blocked_endpoints, "waf_blocked_endpoints"),
-    lead_surface_ids: normalizeStringArray(args.lead_surface_ids, "lead_surface_ids"),
-  };
-  if (surfaceLeadResult.lead_ids.length > 0) {
-    handoff.surface_lead_ids = surfaceLeadResult.lead_ids;
-  }
+    const handoff = {
+      target_domain: domain,
+      wave,
+      agent,
+      surface_id: surfaceId,
+      surface_status: surfaceStatus,
+      provenance,
+      summary,
+      chain_notes: chainNotes,
+      dead_ends: normalizeStringArray(args.dead_ends, "dead_ends"),
+      waf_blocked_endpoints: normalizeStringArray(args.waf_blocked_endpoints, "waf_blocked_endpoints"),
+      lead_surface_ids: normalizeStringArray(args.lead_surface_ids, "lead_surface_ids"),
+    };
+    if (surfaceLeadResult.lead_ids.length > 0) {
+      handoff.surface_lead_ids = surfaceLeadResult.lead_ids;
+    }
 
-  const dir = sessionDir(domain);
-  const markdownPath = path.join(dir, `handoff-${wave}-${agent}.md`);
-  const jsonPath = path.join(dir, `handoff-${wave}-${agent}.json`);
+    const dir = sessionDir(domain);
+    const markdownPath = path.join(dir, `handoff-${wave}-${agent}.md`);
+    const jsonPath = path.join(dir, `handoff-${wave}-${agent}.json`);
 
-  writeFileAtomic(markdownPath, args.content);
-  writeFileAtomic(jsonPath, JSON.stringify(handoff, null, 2) + "\n");
+    writeFileAtomic(markdownPath, args.content);
+    writeFileAtomic(jsonPath, JSON.stringify(handoff, null, 2) + "\n");
 
-  return JSON.stringify({
-    written_md: markdownPath,
-    written_json: jsonPath,
-    provenance,
-    surface_lead_ids: surfaceLeadResult.lead_ids,
+    return JSON.stringify({
+      written_md: markdownPath,
+      written_json: jsonPath,
+      provenance,
+      surface_lead_ids: surfaceLeadResult.lead_ids,
+    });
   });
 }
 

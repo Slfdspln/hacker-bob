@@ -202,11 +202,13 @@ test("MCP-dependent agents declare official mcpServers bountyagent metadata", ()
   }
 });
 
-test("recon-agent remains MCP-free", () => {
-  const document = readFile(".claude/agents/recon-agent.md");
-  assert.doesNotMatch(document, /mcpServers:/);
-  assert.doesNotMatch(document, /requiredMcpServers:/);
-  assert.doesNotMatch(document, /mcp__/i);
+test("recon agents remain MCP-free", () => {
+  for (const agent of ["recon-agent", "deep-recon-agent"]) {
+    const document = readFile(`.claude/agents/${agent}.md`);
+    assert.doesNotMatch(document, /mcpServers:/, `${agent} should not declare MCP servers`);
+    assert.doesNotMatch(document, /requiredMcpServers:/, `${agent} should not require MCP servers`);
+    assert.doesNotMatch(document, /mcp__/i, `${agent} should not expose MCP tools`);
+  }
 });
 
 test("global rules stay small and keep scope plus MCP-owned artifact guardrails", () => {
@@ -642,6 +644,17 @@ test("recon agent preserves exactly seven Bash collection calls", () => {
   assert.match(reconPrompt, /Do not make any additional Bash calls/);
 });
 
+test("normal recon agent is single-purpose and has no deep-only contract", () => {
+  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+
+  assert.doesNotMatch(reconPrompt, /\[MODE\]|MODE=/);
+  assert.doesNotMatch(reconPrompt, /amass/);
+  assert.doesNotMatch(reconPrompt, /assetfinder/);
+  assert.doesNotMatch(reconPrompt, /chaos/);
+  assert.doesNotMatch(reconPrompt, /surface-leads\.json/);
+  assert.doesNotMatch(reconPrompt, /deep-summary\.json/);
+});
+
 test("recon attack_surface schema keeps required fields and adds optional enrichment", () => {
   const reconPrompt = readFile(".claude/agents/recon-agent.md");
 
@@ -671,30 +684,57 @@ test("recon attack_surface schema keeps required fields and adds optional enrich
   assert.match(reconPrompt, /Optional enrichment fields are additive/);
 });
 
-test("deep recon stays script-heavy and writes compact ranked lead artifacts", () => {
-  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+test("deep recon agent preserves exactly seven Bash collection calls", () => {
+  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
+  const bashBlocks = Array.from(deepReconPrompt.matchAll(/```bash\n/g));
 
-  assert.match(reconPrompt, /\[MODE\].*normal.*deep/);
-  assert.match(reconPrompt, /subdomain aggregation/i);
-  assert.match(reconPrompt, /crt\.sh/);
-  assert.match(reconPrompt, /amass/);
-  assert.match(reconPrompt, /assetfinder/);
-  assert.match(reconPrompt, /chaos/);
-  assert.match(reconPrompt, /CDX\/Wayback/);
-  assert.match(reconPrompt, /takeover_candidates\.txt/);
-  assert.match(reconPrompt, /deep-summary\.json/);
-  assert.match(reconPrompt, /surface-leads\.json/);
-  assert.match(reconPrompt, /Do not duplicate every URL/);
+  assert.equal(bashBlocks.length, 7);
+  assert.match(deepReconPrompt, /Use exactly the 7 Bash calls below, in order/);
+  assert.match(deepReconPrompt, /Do not make any additional Bash calls/);
 });
 
-test("recon prompt remains enrichment-only without new commands or imported toolsets", () => {
-  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+test("deep recon stays passive, broad, and writes compact ranked lead artifacts", () => {
+  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
 
-  assert.doesNotMatch(reconPrompt, /\/bob-hunt/);
-  assert.doesNotMatch(reconPrompt, /slash commands?/i);
-  assert.doesNotMatch(reconPrompt, /claude-bug-bounty/i);
-  assert.doesNotMatch(reconPrompt, /scripts\/|tools\//i);
-  assert.doesNotMatch(reconPrompt, /mcp__/i);
+  assert.match(deepReconPrompt, /Passive subdomain and CT aggregation/i);
+  assert.match(deepReconPrompt, /crt\.sh/);
+  assert.match(deepReconPrompt, /amass/);
+  assert.match(deepReconPrompt, /assetfinder/);
+  assert.match(deepReconPrompt, /chaos/);
+  assert.match(deepReconPrompt, /CDX\/Wayback/);
+  assert.match(deepReconPrompt, /JS extraction/i);
+  assert.match(deepReconPrompt, /takeover_candidates/);
+  assert.match(deepReconPrompt, /tech\/CVE hints/);
+  assert.match(deepReconPrompt, /deep-summary\.json/);
+  assert.match(deepReconPrompt, /surface-leads\.json/);
+  assert.match(deepReconPrompt, /Do not duplicate every URL/);
+  assert.match(deepReconPrompt, /Do not dump raw URLs, JavaScript bodies, or scanner output into prose/);
+});
+
+test("deep recon family probing stays target-domain bounded", () => {
+  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
+  const familyStart = deepReconPrompt.indexOf("4. First-party family discovery");
+  const familyEnd = deepReconPrompt.indexOf("5. Archived URLs with CDX/Wayback");
+  assert.ok(familyStart >= 0 && familyEnd > familyStart, "missing deep recon family discovery section");
+  const familySection = deepReconPrompt.slice(familyStart, familyEnd);
+
+  assert.match(familySection, /target-domain bounded/i);
+  assert.match(familySection, /host == domain or host\.endswith\("\." \+ domain\)/);
+  assert.doesNotMatch(familySection, /host\.endswith\("\." \+ tld\)/);
+  assert.doesNotMatch(familySection, /count > 1/);
+  assert.doesNotMatch(familySection, /domain\.rsplit\("\.", 1\)/);
+});
+
+test("recon prompts remain enrichment-only without new commands or imported toolsets", () => {
+  for (const agent of ["recon-agent", "deep-recon-agent"]) {
+    const reconPrompt = readFile(`.claude/agents/${agent}.md`);
+
+    assert.doesNotMatch(reconPrompt, /\/bob-hunt/, `${agent} should not mention slash commands`);
+    assert.doesNotMatch(reconPrompt, /slash commands?/i, `${agent} should not mention slash commands`);
+    assert.doesNotMatch(reconPrompt, /claude-bug-bounty/i, `${agent} should not import external prompts`);
+    assert.doesNotMatch(reconPrompt, /scripts\/|tools\//i, `${agent} should not require repo scripts or tools`);
+    assert.doesNotMatch(reconPrompt, /mcp__/i, `${agent} should not use MCP tools`);
+  }
 });
 
 test("installer and dev-sync copy and configure session-write-guard", () => {
@@ -794,7 +834,9 @@ test("orchestrator documents deep mode persistence, recon mode, and lead debt", 
   assert.match(orchestrator, /`--deep` enables broader script-heavy recon/);
   assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode \}\)/);
   assert.match(orchestrator, /persisted `state\.deep_mode` keeps deep behavior/);
-  assert.match(orchestrator, /MODE=\[normal\|deep\]/);
+  assert.match(orchestrator, /deep_mode false: Agent\(subagent_type: "recon-agent"/);
+  assert.match(orchestrator, /deep_mode true: Agent\(subagent_type: "deep-recon-agent"/);
+  assert.doesNotMatch(orchestrator, /MODE=\[normal\|deep\]/);
   assert.match(orchestrator, /bounty_promote_surface_leads\(\{ target_domain, limit: 8, min_score: 60 \}\)/);
   assert.match(orchestrator, /bounty_read_surface_leads\(\{ target_domain, limit: 20 \}\)/);
   assert.match(orchestrator, /maximum 8/);

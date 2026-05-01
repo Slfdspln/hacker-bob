@@ -2872,6 +2872,142 @@ test("surface leads are compact, promotable, and wave assignable", () => {
   });
 });
 
+test("unassignable high-confidence surface leads are not promoted or counted as deep lead debt", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", deep_mode: true });
+    seedAttackSurfaces(domain, [
+      {
+        id: "surface-a",
+        hosts: [`https://${domain}`],
+        tech_stack: [],
+        endpoints: [],
+        interesting_params: [],
+        nuclei_hits: [],
+        priority: "LOW",
+      },
+    ]);
+
+    const recorded = JSON.parse(recordSurfaceLeads({
+      target_domain: domain,
+      source: "test",
+      leads: [{
+        title: "Vague external research note",
+        evidence: ["High confidence prose without an assignable host or endpoint."],
+        confidence: "high",
+        score: 95,
+        promote: true,
+      }],
+    }));
+    assert.equal(recorded.recorded, 1);
+
+    const leads = JSON.parse(readSurfaceLeads({ target_domain: domain, limit: 5 }));
+    assert.equal(leads.total, 1);
+    assert.equal(leads.high_confidence_unpromoted, 0);
+
+    const promoted = JSON.parse(promoteSurfaceLeads({ target_domain: domain, limit: 3, min_score: 60 }));
+    assert.deepEqual(promoted.promoted_surface_ids, []);
+    assert.equal(promoted.promoted, 0);
+
+    const attackSurface = JSON.parse(fs.readFileSync(attackSurfacePath(domain), "utf8"));
+    assert.deepEqual(attackSurface.surfaces.map((surface) => surface.id), ["surface-a"]);
+
+    const status = JSON.parse(waveStatus({ target_domain: domain }));
+    assert.deepEqual(status.surface_leads, {
+      total: 1,
+      high_confidence_unpromoted: 0,
+      promoted: 0,
+    });
+    assert.deepEqual(status.transition_blockers, []);
+  });
+});
+
+test("bounty_write_wave_handoff persists hunter surface_leads through the session lock", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedAssignments(domain, 1, [
+      { agent: "a1", surface_id: "surface-a" },
+      { agent: "a2", surface_id: "surface-b" },
+    ]);
+
+    const release = acquireSessionLock(domain);
+    try {
+      assert.throws(
+        () => writeWaveHandoff({
+          target_domain: domain,
+          wave: "w1",
+          agent: "a1",
+          surface_id: "surface-a",
+          surface_status: "complete",
+          summary: "a1 complete",
+          content: "# a1",
+          surface_leads: [{
+            title: "Locked lead should not be written",
+            hosts: [`https://locked.${domain}`],
+            confidence: "high",
+            score: 80,
+          }],
+        }),
+        /Session lock busy/,
+      );
+    } finally {
+      release();
+    }
+    assert.ok(!fs.existsSync(path.join(sessionDir(domain), "handoff-w1-a1.json")));
+
+    const first = JSON.parse(writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+      surface_id: "surface-a",
+      surface_status: "complete",
+      summary: "a1 complete",
+      content: "# a1",
+      surface_leads: [{
+        title: "Admin API from a1",
+        hosts: [`https://admin.${domain}`],
+        endpoints: ["/api/admin/users"],
+        confidence: "high",
+        score: 82,
+      }],
+    }));
+    const second = JSON.parse(writeWaveHandoff({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a2",
+      surface_id: "surface-b",
+      surface_status: "complete",
+      summary: "a2 complete",
+      content: "# a2",
+      surface_leads: [{
+        title: "Billing API from a2",
+        hosts: [`https://billing.${domain}`],
+        endpoints: ["/api/billing/invoices"],
+        confidence: "high",
+        score: 81,
+      }],
+    }));
+
+    assert.deepEqual(first.surface_lead_ids, ["SL-1"]);
+    assert.deepEqual(second.surface_lead_ids, ["SL-2"]);
+
+    const leads = JSON.parse(readSurfaceLeads({ target_domain: domain, limit: 10 }));
+    assert.equal(leads.total, 2);
+    assert.deepEqual(
+      leads.leads.map((lead) => lead.title).sort(),
+      ["Admin API from a1", "Billing API from a2"],
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(sessionDir(domain), "handoff-w1-a1.json"), "utf8")).surface_lead_ids,
+      ["SL-1"],
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(sessionDir(domain), "handoff-w1-a2.json"), "utf8")).surface_lead_ids,
+      ["SL-2"],
+    );
+  });
+});
+
 test("deep wave merge promotes high-confidence handoff surface leads into lead_surface_ids", () => {
   withTempHome(() => {
     const domain = "example.com";

@@ -98,6 +98,13 @@ function leadDedupeKey(lead) {
   return crypto.createHash("sha256").update(source || "surface-lead", "utf8").digest("hex");
 }
 
+function isAssignableSurfaceLead(lead) {
+  return !!(lead && (
+    (Array.isArray(lead.hosts) && lead.hosts.length > 0) ||
+    (Array.isArray(lead.endpoints) && lead.endpoints.length > 0)
+  ));
+}
+
 function normalizeSurfaceLead(input, context = {}) {
   if (input == null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("surface lead entries must be objects");
@@ -309,6 +316,7 @@ function leadToSurface(lead, surfaceId) {
 
 function shouldPromoteLead(lead, { minScore, includeMedium }) {
   if (lead.status === "promoted" || lead.promoted_surface_id) return false;
+  if (!isAssignableSurfaceLead(lead)) return false;
   if (lead.promote) return true;
   if (lead.confidence === "high") return true;
   if (includeMedium && lead.confidence === "medium") return true;
@@ -417,7 +425,7 @@ function readSurfaceLeads(args) {
     total: document.leads.length,
     returned: leads.length,
     high_confidence_unpromoted: document.leads.filter(
-      (lead) => lead.status !== "promoted" && lead.confidence === "high",
+      (lead) => lead.status !== "promoted" && lead.confidence === "high" && isAssignableSurfaceLead(lead),
     ).length,
     leads,
   });
@@ -434,6 +442,7 @@ function promoteSurfaceLeads(args) {
 module.exports = {
   LEAD_CONFIDENCE_VALUES,
   LEAD_STATUS_VALUES,
+  isAssignableSurfaceLead,
   normalizeSurfaceLead,
   promoteSurfaceLeads,
   promoteSurfaceLeadsInternal,
