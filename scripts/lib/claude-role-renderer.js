@@ -313,6 +313,18 @@ const CLAUDE_ROLE_SPECS = Object.freeze({
     color: "red",
     mcp_server: true,
     local_tools: Object.freeze(["Bash", "Read"]),
+    // External @brutalist/mcp tools for the adversarial roast layer.
+    // roast_cli_debate is intentionally excluded: the debate orchestrator
+    // spawns multiple CLI agents and is too time-expensive for a per-finding
+    // loop. Single-shot roast is the correct primitive here.
+    extra_mcp_tools: Object.freeze([
+      "mcp__brutalist__roast",
+      "mcp__brutalist__brutalist_discover",
+      "mcp__brutalist__cli_agent_roster",
+    ]),
+    // Brutalist MCP is optional \u2014 registered for availability but not gated.
+    // Graceful fallback when missing is the brutalist-verifier prompt's job.
+    extra_mcp_servers: Object.freeze(["brutalist"]),
   }),
   "balanced-verifier": Object.freeze({
     role_id: "balanced-verifier",
@@ -387,6 +399,7 @@ function claudeAllowedToolsForRole(roleId) {
   return uniqueStrings([
     ...(spec.local_tools || []),
     ...claudeMcpToolsForRole(roleId),
+    ...(spec.extra_mcp_tools || []),
   ]);
 }
 
@@ -415,12 +428,13 @@ function renderAgentFrontmatter(spec) {
   if (spec.max_turns) lines.push(`maxTurns: ${spec.max_turns}`);
   if (spec.background) lines.push("background: true");
   if (spec.mcp_server) {
-    lines.push(
-      "mcpServers:",
-      "  - bountyagent",
-      "requiredMcpServers:",
-      "  - bountyagent",
-    );
+    const mcpServers = uniqueStrings(["bountyagent", ...(spec.extra_mcp_servers || [])]);
+    lines.push("mcpServers:");
+    for (const server of mcpServers) lines.push(`  - ${server}`);
+    // requiredMcpServers stays at bountyagent only — extra servers are optional
+    // (graceful fallback). Bumping a server here makes the agent fail to spawn
+    // when the server is missing, which we explicitly do not want for brutalist.
+    lines.push("requiredMcpServers:", "  - bountyagent");
   }
   lines.push("---");
   return lines.join("\n");

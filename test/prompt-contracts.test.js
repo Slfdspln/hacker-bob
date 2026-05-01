@@ -1594,3 +1594,54 @@ test("SC tools register evidence role bundle so evidence-agent can re-run family
     assert.ok(meta.role_bundles.includes("evidence"), `${name} must include evidence role bundle`);
   }
 });
+
+test("brutalist-verifier wires the @brutalist/mcp roast layer with graceful fallback (no debate)", () => {
+  for (const filePath of [
+    "prompts/roles/brutalist-verifier.md",
+    ".claude/agents/brutalist-verifier.md",
+    "adapters/codex/skills/bob-hunt/SKILL.md",
+  ]) {
+    const body = readFile(filePath);
+    assert.match(body, /mcp__brutalist__roast\b/, `${filePath} must reference mcp__brutalist__roast`);
+    assert.match(body, /brutalist roast unavailable/i, `${filePath} must include the graceful-fallback wording`);
+    // The debate orchestrator is too time-expensive for a per-finding loop.
+    // The prompt should explicitly forbid it; the only allowed mention is the
+    // negative instruction (do NOT call mcp__brutalist__roast_cli_debate).
+    const debateMentions = body.match(/mcp__brutalist__roast_cli_debate/g) || [];
+    assert.ok(debateMentions.length <= 1, `${filePath} mentions roast_cli_debate ${debateMentions.length} times; expected at most 1 (the explicit prohibition)`);
+    if (debateMentions.length === 1) {
+      const debateContext = body.slice(Math.max(0, body.indexOf("roast_cli_debate") - 80), body.indexOf("roast_cli_debate") + 80);
+      assert.match(debateContext, /do NOT call|too time-expensive/i, `${filePath} mentions roast_cli_debate without the explicit prohibition context`);
+    }
+  }
+});
+
+test("Claude brutalist-verifier agent registers @brutalist/mcp tools but only requires bountyagent", () => {
+  const body = readFile(".claude/agents/brutalist-verifier.md");
+  // Inspect the tools: frontmatter line specifically — the prompt body will mention
+  // roast_cli_debate once in the explicit prohibition, but the tools allowlist must not.
+  const toolsLine = body.match(/^tools: (.+)$/m);
+  assert.ok(toolsLine, "brutalist-verifier frontmatter missing tools: line");
+  const toolsList = toolsLine[1];
+  for (const tool of ["mcp__brutalist__roast", "mcp__brutalist__brutalist_discover", "mcp__brutalist__cli_agent_roster"]) {
+    assert.ok(toolsList.includes(tool), `brutalist-verifier tools: must include ${tool}`);
+  }
+  assert.ok(!toolsList.includes("mcp__brutalist__roast_cli_debate"), "brutalist-verifier tools: must NOT include roast_cli_debate");
+  // mcpServers should list both bountyagent and brutalist; requiredMcpServers should be bountyagent-only.
+  const mcpServersBlock = body.match(/mcpServers:\n((?:  - .+\n)+)/);
+  assert.ok(mcpServersBlock, "brutalist-verifier frontmatter missing mcpServers list");
+  assert.match(mcpServersBlock[1], /  - bountyagent\n/);
+  assert.match(mcpServersBlock[1], /  - brutalist\n/);
+  const requiredBlock = body.match(/requiredMcpServers:\n((?:  - .+\n)+)/);
+  assert.ok(requiredBlock, "brutalist-verifier frontmatter missing requiredMcpServers list");
+  assert.match(requiredBlock[1], /  - bountyagent\n/);
+  assert.doesNotMatch(requiredBlock[1], /  - brutalist\n/, "brutalist must remain optional (graceful fallback)");
+});
+
+test("Codex bundled .mcp.json registers both bountyagent and the optional brutalist server", () => {
+  const mcp = JSON.parse(readFile("adapters/codex/hacker-bob/.mcp.json"));
+  assert.ok(mcp.mcpServers && mcp.mcpServers.bountyagent, "Codex .mcp.json must keep bountyagent");
+  assert.ok(mcp.mcpServers.brutalist, "Codex .mcp.json must register the brutalist server");
+  assert.equal(mcp.mcpServers.brutalist.command, "npx");
+  assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
+});

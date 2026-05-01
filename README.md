@@ -224,6 +224,10 @@ Open `.mcp.json` and confirm it contains an `mcpServers.bountyagent` entry point
 
 It is not a skill name. The MCP server namespace stayed `bountyagent` so existing tool wiring (`mcp__bountyagent__bounty_*`) continues to work after the user-facing slash and skill commands renamed to `/bob-*` and `$bob-*`. Seeing `bountyagent` in `claude mcp list` or `.mcp.json` is correct.
 
+### `brutalist` server missing from `claude mcp list`
+
+The brutalist verifier uses the external [`@brutalist/mcp`](https://www.npmjs.com/package/@brutalist/mcp) server for an adversarial roast pass per finding. The installer registers it as an optional MCP server alongside `bountyagent`, but it is **not required** — the brutalist verifier falls back to PoC-only verification with `brutalist roast unavailable` noted in the verification reasoning. If you want the roast layer back, ensure your `.mcp.json` contains `mcpServers.brutalist` (`npx -y @brutalist/mcp@latest`) and reload your host CLI.
+
 ## Security Model
 
 Bob installs into a local project directory. The installer writes Bob-managed shared files under `mcp/` and `.hacker-bob/`, then writes adapter-specific host files such as `.claude/`, `.codex/plugins/hacker-bob`, `.agents/plugins/marketplace.json`, and `.mcp.json`. The Codex adapter also writes Bob-managed activation entries under `$CODEX_HOME` or `~/.codex` so Codex can load the local plugin. These files should be reviewed like any other automation that can run commands from your host CLI.

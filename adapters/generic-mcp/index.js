@@ -36,6 +36,15 @@ function dirExists(dirPath) {
   }
 }
 
+// External adversarial-roast MCP server consumed by the brutalist-verifier
+// role. Optional — registered alongside bountyagent but not required at
+// runtime. See prompts/roles/brutalist-verifier.md for the graceful-fallback
+// contract.
+const BRUTALIST_MCP_SERVER = Object.freeze({
+  command: "npx",
+  args: ["-y", "@brutalist/mcp@latest"],
+});
+
 function mergeConfig({ serverPath }) {
   return {
     mcpServers: {
@@ -43,6 +52,7 @@ function mergeConfig({ serverPath }) {
         command: "node",
         args: [serverPath],
       },
+      brutalist: { ...BRUTALIST_MCP_SERVER, args: [...BRUTALIST_MCP_SERVER.args] },
     },
   };
 }
@@ -124,6 +134,13 @@ function doctor({ targetAbs }) {
       } else {
         addCheck(checks, "error", "generic_mcp_config", ".mcp.json is missing the Bob-managed bountyagent server entry");
       }
+      // brutalist MCP is optional — info-level only, never errors.
+      const brutalistEntry = mcp.mcpServers && mcp.mcpServers.brutalist;
+      if (brutalistEntry && brutalistEntry.command === BRUTALIST_MCP_SERVER.command) {
+        addCheck(checks, "ok", "generic_mcp_brutalist_optional", ".mcp.json registers the optional @brutalist/mcp server for the brutalist verifier");
+      } else {
+        addCheck(checks, "info", "generic_mcp_brutalist_optional", ".mcp.json does not register @brutalist/mcp — brutalist verifier will fall back gracefully");
+      }
     } catch (error) {
       addCheck(checks, "error", "generic_mcp_config", ".mcp.json is not valid JSON", {
         error: error.message || String(error),
@@ -201,6 +218,13 @@ function removeMcpConfig(targetAbs, result) {
   }
   const next = { ...mcp, mcpServers: { ...mcp.mcpServers } };
   delete next.mcpServers.bountyagent;
+  // Also remove the Bob-managed brutalist entry if present and unmodified.
+  if (
+    next.mcpServers.brutalist
+    && next.mcpServers.brutalist.command === BRUTALIST_MCP_SERVER.command
+  ) {
+    delete next.mcpServers.brutalist;
+  }
   if (Object.keys(next.mcpServers).length === 0) delete next.mcpServers;
   result.actions.push({ type: Object.keys(next).length === 0 ? "remove_config_file" : "update_config", path: ".mcp.json" });
   if (result.dry_run) return;
@@ -231,6 +255,7 @@ function uninstall({ targetAbs, dryRun = true, preserveMcpConfig = false }) {
 }
 
 module.exports = {
+  BRUTALIST_MCP_SERVER,
   PROMPT_FILES,
   PROMPT_SOURCE_DIR,
   PROMPT_TARGET_DIR,

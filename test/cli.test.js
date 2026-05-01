@@ -55,6 +55,13 @@ test("CLI installs into a workspace", () => {
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-check-update.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "hooks", "bob-egress.js")));
     assert.ok(fs.existsSync(path.join(workspace, ".claude", "bob", "egress-profiles.json")));
+
+    // .mcp.json must register both bountyagent (required) and brutalist (optional roast layer).
+    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
+    assert.ok(mcp.mcpServers.bountyagent);
+    assert.ok(mcp.mcpServers.brutalist, "Claude install must register the optional brutalist MCP server");
+    assert.equal(mcp.mcpServers.brutalist.command, "npx");
+    assert.deepEqual(mcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });
@@ -162,6 +169,14 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
     assert.ok(!fs.existsSync(path.join(workspace, ".claude")));
     assert.ok(!fs.existsSync(path.join(workspace, ".codex")));
 
+    // .mcp.json must keep the operator's existing entry, register bountyagent,
+    // and additionally register the optional brutalist server.
+    const installedMcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
+    assert.ok(installedMcp.mcpServers.existing, "generic-mcp install must preserve unrelated MCP servers");
+    assert.ok(installedMcp.mcpServers.bountyagent);
+    assert.ok(installedMcp.mcpServers.brutalist, "generic-mcp install must register the optional brutalist MCP server");
+    assert.deepEqual(installedMcp.mcpServers.brutalist.args, ["-y", "@brutalist/mcp@latest"]);
+
     const output = execFileSync(process.execPath, [CLI, "uninstall", workspace, "--adapter", "generic-mcp", "--yes", "--json"], {
       cwd: ROOT,
       env: { ...process.env, HOME: tempHome },
@@ -178,6 +193,7 @@ test("CLI generic MCP adapter install and uninstall preserve unrelated MCP confi
     const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
     assert.ok(mcp.mcpServers.existing);
     assert.ok(!mcp.mcpServers.bountyagent);
+    assert.ok(!mcp.mcpServers.brutalist, "uninstall must also remove the Bob-managed brutalist server");
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });

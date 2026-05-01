@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const config = require("./config.js");
 const {
+  BRUTALIST_MCP_SERVER,
   mergeMcp,
   mergeSettings,
   STALE_GLOBAL_MCP_PERMISSIONS,
@@ -514,6 +515,15 @@ function doctor({
     addCheck(checks, "error", checkId("mcp_server_config"), ".mcp.json is missing the Bob-managed bountyagent server entry");
   }
 
+  // brutalist MCP is optional — check is informational only, never errors.
+  // brutalist-verifier falls back gracefully when this server is missing.
+  const brutalistEntry = mcp && mcp.mcpServers && mcp.mcpServers.brutalist;
+  if (brutalistEntry && brutalistEntry.command === BRUTALIST_MCP_SERVER.command) {
+    addCheck(checks, "ok", checkId("mcp_brutalist_optional"), ".mcp.json registers the optional @brutalist/mcp server for the brutalist verifier");
+  } else if (mcp) {
+    addCheck(checks, "info", checkId("mcp_brutalist_optional"), ".mcp.json does not register @brutalist/mcp — brutalist verifier will fall back gracefully");
+  }
+
   const bobSettings = config.defaultClaudeSettings();
   const settingsPath = path.join(claudeDir, "settings.json");
   const settings = jsonReadCheck(checks, settingsPath, checkId("settings_json"), targetAbs);
@@ -627,6 +637,14 @@ function removeMcpConfig(targetAbs, result, helpers) {
   }
   const next = { ...mcp, mcpServers: { ...mcp.mcpServers } };
   delete next.mcpServers.bountyagent;
+  // Also remove the Bob-managed brutalist entry if present and unmodified.
+  // Operator overrides (different command/args) are preserved.
+  if (
+    next.mcpServers.brutalist
+    && next.mcpServers.brutalist.command === BRUTALIST_MCP_SERVER.command
+  ) {
+    delete next.mcpServers.brutalist;
+  }
   if (Object.keys(next.mcpServers).length === 0) delete next.mcpServers;
   result.actions.push({ type: Object.keys(next).length === 0 ? "remove_config_file" : "update_config", path: ".mcp.json" });
   if (result.dry_run) return;

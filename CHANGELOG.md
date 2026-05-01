@@ -21,6 +21,14 @@
 - **Behavior change (no-flag `uninstall`):** previously, missing `--adapter` removed only Claude. Now `uninstall` removes every adapter recorded in install metadata. The default `--dry-run` behavior is unchanged: explicit `--yes` is still required to remove files.
 - Added `detectAdapterId(projectDir, options)` to `adapters/index.js` as a pure, host-injectable function with a fixed precedence order; added `resolveInstallAdapters` and `resolveLifecycleAdapters` helpers in `scripts/install.js` and `scripts/lifecycle.js` so install/update/doctor/uninstall share the same adapter resolution path.
 
+### Brutalist verifier wired to `@brutalist/mcp`
+
+- Added the external `@brutalist/mcp` server (npm) to the install configuration of every adapter as an optional MCP server alongside `bountyagent`. Claude registers it via `.mcp.json` merge; Codex ships it in the bundled plugin `.mcp.json`; generic-mcp merges it into the operator's root `.mcp.json`.
+- Updated `prompts/roles/brutalist-verifier.md` so the brutalist verifier calls `mcp__brutalist__roast` per finding for an additional adversarial pass after the PoC re-run, with explicit graceful fallback when the MCP is unavailable. The roast verdict folds into `reasoning`; the PoC re-run still drives `disposition` and `severity`.
+- The brutalist tools allowlist excludes `mcp__brutalist__roast_cli_debate` — the debate orchestrator is too time-expensive for a per-finding loop. Only `roast`, `brutalist_discover`, and `cli_agent_roster` are exposed.
+- `requiredMcpServers` for brutalist-verifier remains `bountyagent`-only so the agent can spawn even when `@brutalist/mcp` is absent.
+- Added an info-level doctor check (`claude_mcp_brutalist_optional`, `generic_mcp_brutalist_optional`) reporting brutalist-server presence; never errors on absence.
+
 ### AI-agent install reframing (mirrors main v1.1.8 / v1.1.9 intents, adapted for the multi-adapter architecture)
 
 - Added a new `### For AI Coding Agents` subsection at the top of the README Quickstart that treats a pasted repository URL as an install request, defaults the install target to `$PWD`, and tells AI agents not to ask "what do you want to do?" when the current directory is a normal project.
