@@ -109,6 +109,8 @@ test("hunter frontmatter excludes Write and still exposes wave handoff MCP tools
   assert.ok(tools.includes("mcp__bountyagent__bounty_read_http_audit"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_import_static_artifact"));
   assert.ok(tools.includes("mcp__bountyagent__bounty_static_scan"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_record_surface_leads"));
+  assert.ok(tools.includes("mcp__bountyagent__bounty_read_surface_leads"));
   assert.ok(!tools.includes("mcp__bountyagent__bounty_import_http_traffic"));
   assert.ok(!tools.includes("mcp__bountyagent__bounty_public_intel"));
   assert.ok(!tools.includes("mcp__bountyagent__bounty_auth_manual"));
@@ -152,6 +154,11 @@ test("manifest, settings, and generated Claude config keep global MCP permission
   assert.deepEqual(TOOL_MANIFEST.bounty_read_pipeline_analytics.role_bundles, ["orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.global_preapproval, false);
   assert.equal(TOOL_MANIFEST.bounty_read_pipeline_analytics.mutating, false);
+  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter", "orchestrator"]);
+  assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.global_preapproval, false);
+  assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.mutating, true);
   assert.deepEqual(TOOL_MANIFEST.bounty_write_evidence_packs.role_bundles, ["evidence"]);
   assert.deepEqual(TOOL_MANIFEST.bounty_read_evidence_packs.role_bundles, ["evidence", "grader", "reporter", "orchestrator"]);
   assert.ok(!sourceAllowed.has("bounty_merge_wave_handoffs"));
@@ -160,6 +167,9 @@ test("manifest, settings, and generated Claude config keep global MCP permission
   assert.ok(!generatedAllowed.has("bounty_merge_wave_handoffs"));
   assert.ok(!generatedAllowed.has("bounty_read_tool_telemetry"));
   assert.ok(!generatedAllowed.has("bounty_read_pipeline_analytics"));
+  assert.ok(!sourceAllowed.has("bounty_promote_surface_leads"));
+  assert.ok(sourceAllowed.has("bounty_record_surface_leads"));
+  assert.ok(sourceAllowed.has("bounty_read_surface_leads"));
   assert.ok(sourceAllowed.has("bounty_wave_handoff_status"));
   assert.ok(sourceAllowed.has("bounty_write_evidence_packs"));
   assert.ok(sourceAllowed.has("bounty_read_evidence_packs"));
@@ -192,11 +202,13 @@ test("MCP-dependent agents declare official mcpServers bountyagent metadata", ()
   }
 });
 
-test("recon-agent remains MCP-free", () => {
-  const document = readFile(".claude/agents/recon-agent.md");
-  assert.doesNotMatch(document, /mcpServers:/);
-  assert.doesNotMatch(document, /requiredMcpServers:/);
-  assert.doesNotMatch(document, /mcp__/i);
+test("recon agents remain MCP-free", () => {
+  for (const agent of ["recon-agent", "deep-recon-agent"]) {
+    const document = readFile(`.claude/agents/${agent}.md`);
+    assert.doesNotMatch(document, /mcpServers:/, `${agent} should not declare MCP servers`);
+    assert.doesNotMatch(document, /requiredMcpServers:/, `${agent} should not require MCP servers`);
+    assert.doesNotMatch(document, /mcp__/i, `${agent} should not expose MCP tools`);
+  }
 });
 
 test("global rules stay small and keep scope plus MCP-owned artifact guardrails", () => {
@@ -632,6 +644,17 @@ test("recon agent preserves exactly seven Bash collection calls", () => {
   assert.match(reconPrompt, /Do not make any additional Bash calls/);
 });
 
+test("normal recon agent is single-purpose and has no deep-only contract", () => {
+  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+
+  assert.doesNotMatch(reconPrompt, /\[MODE\]|MODE=/);
+  assert.doesNotMatch(reconPrompt, /amass/);
+  assert.doesNotMatch(reconPrompt, /assetfinder/);
+  assert.doesNotMatch(reconPrompt, /chaos/);
+  assert.doesNotMatch(reconPrompt, /surface-leads\.json/);
+  assert.doesNotMatch(reconPrompt, /deep-summary\.json/);
+});
+
 test("recon attack_surface schema keeps required fields and adds optional enrichment", () => {
   const reconPrompt = readFile(".claude/agents/recon-agent.md");
 
@@ -661,14 +684,86 @@ test("recon attack_surface schema keeps required fields and adds optional enrich
   assert.match(reconPrompt, /Optional enrichment fields are additive/);
 });
 
-test("recon prompt remains enrichment-only without new commands or imported toolsets", () => {
-  const reconPrompt = readFile(".claude/agents/recon-agent.md");
+test("deep recon agent preserves exactly seven Bash collection calls", () => {
+  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
+  const bashBlocks = Array.from(deepReconPrompt.matchAll(/```bash\n/g));
 
-  assert.doesNotMatch(reconPrompt, /\/bob-hunt/);
-  assert.doesNotMatch(reconPrompt, /slash commands?/i);
-  assert.doesNotMatch(reconPrompt, /claude-bug-bounty/i);
-  assert.doesNotMatch(reconPrompt, /scripts\/|tools\//i);
-  assert.doesNotMatch(reconPrompt, /mcp__/i);
+  assert.equal(bashBlocks.length, 7);
+  assert.match(deepReconPrompt, /Use exactly the 7 Bash calls below, in order/);
+  assert.match(deepReconPrompt, /Do not make any additional Bash calls/);
+});
+
+test("deep recon stays passive, broad, and writes compact ranked lead artifacts", () => {
+  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
+
+  assert.match(deepReconPrompt, /Passive subdomain and CT aggregation/i);
+  assert.match(deepReconPrompt, /crt\.sh/);
+  assert.match(deepReconPrompt, /amass/);
+  assert.match(deepReconPrompt, /assetfinder/);
+  assert.match(deepReconPrompt, /chaos/);
+  assert.match(deepReconPrompt, /CDX\/Wayback/);
+  assert.match(deepReconPrompt, /JS extraction/i);
+  assert.match(deepReconPrompt, /takeover_candidates/);
+  assert.match(deepReconPrompt, /tech\/CVE hints/);
+  assert.match(deepReconPrompt, /sibling-domain-candidates\.txt/);
+  assert.match(deepReconPrompt, /brand-sibling-probe-candidates\.txt/);
+  assert.match(deepReconPrompt, /Brand-linked sibling properties lightly probed/);
+  assert.match(deepReconPrompt, /Sibling domain candidates recorded for review/);
+  assert.match(deepReconPrompt, /deep-summary\.json/);
+  assert.match(deepReconPrompt, /surface-leads\.json/);
+  assert.match(deepReconPrompt, /Do not duplicate every URL/);
+  assert.match(deepReconPrompt, /Do not dump raw URLs, JavaScript bodies, or scanner output into prose/);
+});
+
+test("deep recon target family probing stays bounded and sibling liveness is gated", () => {
+  const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
+  const familyStart = deepReconPrompt.indexOf("4. First-party family discovery");
+  const familyEnd = deepReconPrompt.indexOf("5. Archived URLs with CDX/Wayback");
+  const cdxEnd = deepReconPrompt.indexOf("6. JS extraction and endpoint clustering");
+  const step7Start = deepReconPrompt.indexOf("7. Compact summaries, ranked leads, and attack surface");
+  assert.ok(familyStart >= 0 && familyEnd > familyStart, "missing deep recon family discovery section");
+  assert.ok(step7Start > cdxEnd, "missing deep recon compact summary section");
+  const familySection = deepReconPrompt.slice(familyStart, familyEnd);
+  const cdxSection = deepReconPrompt.slice(familyEnd, cdxEnd);
+  const jsSection = deepReconPrompt.slice(cdxEnd, step7Start);
+  const step7Section = deepReconPrompt.slice(step7Start);
+  const liveUrlsEnd = step7Section.indexOf(': > "$SESSION/nuclei_results.txt"');
+  assert.ok(liveUrlsEnd > 0, "missing deep recon live_urls builder");
+  const liveUrlsBuilder = step7Section.slice(0, liveUrlsEnd);
+
+  assert.match(familySection, /Target-domain family probing remains bounded/i);
+  assert.match(familySection, /do not probe the broad `sibling-domain-candidates\.txt` set/i);
+  assert.match(familySection, /host == domain or host\.endswith\("\." \+ domain\)/);
+  assert.match(familySection, /sibling-domain-candidates\.txt/);
+  assert.match(familySection, /brand-sibling-probe-candidates\.txt/);
+  assert.match(familySection, /same-TLD-only repeat evidence stays record-only/i);
+  assert.match(familySection, /label\.startswith\(target_label\)/);
+  assert.match(familySection, /if brand_related:\n\s+brand_siblings\.append\(host\)/);
+  assert.match(familySection, /-l "\$SESSION\/brand-sibling-probe-candidates\.txt"/);
+  assert.match(step7Section, /def add_lead\([\s\S]*promote=None\)/);
+  assert.match(step7Section, /Brand-linked sibling properties lightly probed[\s\S]*\*brand_sibling_live\[:5\][\s\S]*55, promote=True/);
+  assert.doesNotMatch(step7Section, /Brand-linked sibling properties queued for review[\s\S]{0,300}promote=True/);
+  assert.doesNotMatch(familySection, /httpx[\s\S]*sibling-domain-candidates\.txt/i);
+  assert.doesNotMatch(familySection, /-l "\$SESSION\/sibling-domain-candidates\.txt"/);
+  assert.doesNotMatch(cdxSection, /sibling-domain-candidates\.txt/);
+  for (const needle of ["brand-sibling-probe-candidates.txt", "brand_sibling_live.txt"]) {
+    const escapedNeedle = needle.replace(/\./g, "\\.");
+    assert.doesNotMatch(cdxSection, new RegExp(escapedNeedle));
+    assert.doesNotMatch(jsSection, new RegExp(escapedNeedle));
+    assert.doesNotMatch(liveUrlsBuilder, new RegExp(escapedNeedle));
+  }
+});
+
+test("recon prompts remain enrichment-only without new commands or imported toolsets", () => {
+  for (const agent of ["recon-agent", "deep-recon-agent"]) {
+    const reconPrompt = readFile(`.claude/agents/${agent}.md`);
+
+    assert.doesNotMatch(reconPrompt, /\/bob-hunt/, `${agent} should not mention slash commands`);
+    assert.doesNotMatch(reconPrompt, /slash commands?/i, `${agent} should not mention slash commands`);
+    assert.doesNotMatch(reconPrompt, /claude-bug-bounty/i, `${agent} should not import external prompts`);
+    assert.doesNotMatch(reconPrompt, /scripts\/|tools\//i, `${agent} should not require repo scripts or tools`);
+    assert.doesNotMatch(reconPrompt, /mcp__/i, `${agent} should not use MCP tools`);
+  }
 });
 
 test("installer and dev-sync copy and configure session-write-guard", () => {
@@ -759,6 +854,23 @@ test("orchestrator documents --no-auth flag and skips AUTH when set", () => {
     /auth_status.*unauthenticated/,
     "Missing unauthenticated transition when --no-auth is set"
   );
+});
+
+test("orchestrator documents deep mode persistence, recon mode, and lead debt", () => {
+  const orchestrator = readFile(".claude/skills/bob-hunt/SKILL.md");
+
+  assert.match(orchestrator, /argument-hint: .*--deep/);
+  assert.match(orchestrator, /`--deep` enables broader script-heavy recon/);
+  assert.match(orchestrator, /bounty_init_session\(\{ target_domain, target_url, deep_mode \}\)/);
+  assert.match(orchestrator, /persisted `state\.deep_mode` keeps deep behavior/);
+  assert.match(orchestrator, /deep_mode false: Agent\(subagent_type: "recon-agent"/);
+  assert.match(orchestrator, /deep_mode true: Agent\(subagent_type: "deep-recon-agent"/);
+  assert.doesNotMatch(orchestrator, /MODE=\[normal\|deep\]/);
+  assert.match(orchestrator, /bounty_promote_surface_leads\(\{ target_domain, limit: 8, min_score: 60 \}\)/);
+  assert.match(orchestrator, /bounty_read_surface_leads\(\{ target_domain, limit: 20 \}\)/);
+  assert.match(orchestrator, /maximum 8/);
+  assert.match(orchestrator, /high-confidence unpromoted leads/);
+  assert.match(orchestrator, /surface_leads/);
 });
 
 test("orchestrator documents checkpoint modes and MCP-owned traffic/audit/intel/static state", () => {
@@ -862,6 +974,9 @@ test("hunter and orchestrator prompts keep the structured handoff contract expli
   assert.match(hunterPrompt, /BOB_HUNTER_DONE/);
   assert.match(orchestratorPrompt, /BOB_HUNTER_DONE/);
   assert.match(hunterPrompt, /Durable hunt state must flow only through MCP tools\./);
+  assert.match(hunterPrompt, /bounty_record_surface_leads/);
+  assert.match(hunterPrompt, /surface_leads/);
+  assert.match(hunterPrompt, /surface-leads\.json/);
   assert.match(hunterPrompt, /bounty_log_coverage/);
   assert.match(hunterPrompt, /never write `coverage\.jsonl` through Bash/);
   assert.match(hunterPrompt, /Never create or backfill[\s\S]*http-audit\.jsonl[\s\S]*traffic\.jsonl[\s\S]*public-intel\.json[\s\S]*static-artifacts\.jsonl[\s\S]*static-scan-results\.jsonl/);
