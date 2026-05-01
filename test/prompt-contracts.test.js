@@ -705,6 +705,8 @@ test("deep recon stays passive, broad, and writes compact ranked lead artifacts"
   assert.match(deepReconPrompt, /JS extraction/i);
   assert.match(deepReconPrompt, /takeover_candidates/);
   assert.match(deepReconPrompt, /tech\/CVE hints/);
+  assert.match(deepReconPrompt, /sibling-domain-candidates\.txt/);
+  assert.match(deepReconPrompt, /Sibling domain candidates discovered but not probed/);
   assert.match(deepReconPrompt, /deep-summary\.json/);
   assert.match(deepReconPrompt, /surface-leads\.json/);
   assert.match(deepReconPrompt, /Do not duplicate every URL/);
@@ -715,14 +717,18 @@ test("deep recon family probing stays target-domain bounded", () => {
   const deepReconPrompt = readFile(".claude/agents/deep-recon-agent.md");
   const familyStart = deepReconPrompt.indexOf("4. First-party family discovery");
   const familyEnd = deepReconPrompt.indexOf("5. Archived URLs with CDX/Wayback");
+  const cdxEnd = deepReconPrompt.indexOf("6. JS extraction and endpoint clustering");
   assert.ok(familyStart >= 0 && familyEnd > familyStart, "missing deep recon family discovery section");
   const familySection = deepReconPrompt.slice(familyStart, familyEnd);
+  const cdxSection = deepReconPrompt.slice(familyEnd, cdxEnd);
 
   assert.match(familySection, /target-domain bounded/i);
+  assert.match(familySection, /do not probe them/i);
   assert.match(familySection, /host == domain or host\.endswith\("\." \+ domain\)/);
-  assert.doesNotMatch(familySection, /host\.endswith\("\." \+ tld\)/);
-  assert.doesNotMatch(familySection, /count > 1/);
-  assert.doesNotMatch(familySection, /domain\.rsplit\("\.", 1\)/);
+  assert.match(familySection, /sibling-domain-candidates\.txt/);
+  assert.doesNotMatch(familySection, /httpx[\s\S]*sibling-domain-candidates\.txt/i);
+  assert.doesNotMatch(familySection, /-l "\$SESSION\/sibling-domain-candidates\.txt"/);
+  assert.doesNotMatch(cdxSection, /sibling-domain-candidates\.txt/);
 });
 
 test("recon prompts remain enrichment-only without new commands or imported toolsets", () => {
