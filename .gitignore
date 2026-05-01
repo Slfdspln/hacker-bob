@@ -10,3 +10,6 @@ testing/**/node_modules/
 .agents/
 .hacker-bob/VERSION
 .hacker-bob/install.json
+.claude/bob/VERSION
+.claude/bob/install.json
+.claude/bob/egress-profiles.json

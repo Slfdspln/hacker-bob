@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-01
+
+### Smart-contract testing pipeline (Phase 0–6)
+
+- Added six chain-family runners with allowlisted, sandboxed test execution: `bounty_foundry_run` and `bounty_halmos_run` (EVM), `bounty_anchor_run` (SVM), `bounty_aptos_run` and `bounty_sui_run` (Move), `bounty_substrate_run` (ink! / `cargo test`), and `bounty_cosmwasm_run` (cw-multi-test / `cargo test`). Each runner accepts a manifest path and a single test selector, parses framework output into structured pass/fail records, and caps captured stdout to bounded excerpts.
+- Added 14 read-only chain-data fetch tools across the same six families for live state lookups during HUNT/CHAIN/VERIFY.
+- Added new `hunter-substrate` and `hunter-cosmwasm` agent roles with bug-class catalogs (e.g., `set_code_hash_unauthorized`, `caller_spoof`, `lazy_storage_layout_drift`, `chain_extension_unauthenticated`, `migrate_msg_open`, `submessage_reply_misuse`, `indexed_map_key_collision`).
+- Extended findings normalization to validate SS58 (substrate) and bech32 (cosmwasm) addresses with their actual checksum/length rules; rejected EVM-shape addresses on Move families.
+- Added a dedicated `evidence-agent` role that dispatches by `surface_type`: HTTP findings go through `bounty_http_scan`; SC findings go through the appropriate family runner with a `sample_type` mapping (`evm_foundry_run`, `svm_anchor_run`, `aptos_move_test`, `sui_move_test`, `substrate_ink_test`, `cosmwasm_cw_multi_test`).
+- Phase gates now treat SC surfaces consistently: HUNT→CHAIN respects `partial` + `bypass_attempts`; CHAIN→VERIFY clears via `bounty_write_chain_attempt` per pivot; VERIFY→GRADE clears via SC-aware evidence packs.
+
+### Adapter auto-detection on install / update / doctor / uninstall
+
+- `hacker-bob install <project-dir>` no longer requires `--adapter`. When the flag is omitted, Bob picks an adapter using a layered detector: (1) prior install metadata in `.hacker-bob/install.json`, (2) host environment markers (`$CLAUDE_PROJECT_DIR`, `$CODEX_HOME`), (3) project files (`.claude/`, `.codex/plugins/`, `.agents/plugins/`, `.mcp.json`), or (4) host CLI on `PATH`. Claude remains the final fallback. The chosen adapter and reason are logged to stderr.
+- **Behavior change (no-flag `install` and `update`):** previously, missing `--adapter` always defaulted to `claude`. Reinstalling a Codex-only project would silently install Claude *alongside* it; updating that project would refresh only Claude. With auto-detection, reinstalls and updates preserve the existing adapter mix from `.hacker-bob/install.json`.
+- **Behavior change (no-flag `doctor`):** previously, missing `--adapter` ran only Claude checks. Now `doctor` runs the checks for every adapter recorded in install metadata.
+- **Behavior change (no-flag `uninstall`):** previously, missing `--adapter` removed only Claude. Now `uninstall` removes every adapter recorded in install metadata. The default `--dry-run` behavior is unchanged: explicit `--yes` is still required to remove files.
+- Added `detectAdapterId(projectDir, options)` to `adapters/index.js` as a pure, host-injectable function with a fixed precedence order; added `resolveInstallAdapters` and `resolveLifecycleAdapters` helpers in `scripts/install.js` and `scripts/lifecycle.js` so install/update/doctor/uninstall share the same adapter resolution path.
+
+### AI-agent install reframing (mirrors main v1.1.8 / v1.1.9 intents, adapted for the multi-adapter architecture)
+
+- Added a new `### For AI Coding Agents` subsection at the top of the README Quickstart that treats a pasted repository URL as an install request, defaults the install target to `$PWD`, and tells AI agents not to ask "what do you want to do?" when the current directory is a normal project.
+- Documented the auto-detection precedence and the per-adapter verification commands (claude: `claude mcp list` shows `bountyagent`; codex: `~/.codex/skills/bob-hunt/SKILL.md` exists; generic-mcp: `.mcp.json` contains `mcpServers.bountyagent`).
+- Added a "do not install into the Hacker Bob source tree" guard for AI agents.
+- Added a `## MCP Troubleshooting` section covering the `Cannot find module './tools/index.js'` failure mode and three adapter-specific reload failures, plus a callout that `bountyagent` is the expected MCP server namespace and not a stale skill name.
+- Tagline edit: "point him at a domain" → "point him at an authorized target".
+- Ignored `.claude/bob/{VERSION,install.json,egress-profiles.json}` so installing Bob into a hacker-bob source checkout does not leak machine-specific install metadata into commits.
+
+### Tests
+
+- Added `test/adapter-detection.test.js` with 14 unit tests covering all four detection layers and precedence.
+- Added 7 new CLI integration tests covering: fresh-install default fallback, project-artifact-driven codex selection, reinstall preservation, multi-adapter no-flag uninstall, multi-adapter no-flag doctor, no-flag update preserving prior adapters, and generic-mcp `.mcp.json` presence after install.
+
 ## [1.1.7] - 2026-04-28
 
 - Added operator-controlled egress profiles under `.claude/bob/`, including a safe example config, installer-preserved operator config, and `/bob-egress` management commands for listing, adding, testing, enabling, disabling, and removing profiles.

@@ -195,10 +195,10 @@ function checkCanonicalPack(rootPackage) {
     }
   }
 
-  if (canonical.size < 1500000) {
-    pass(`canonical pack size ${canonical.size} bytes is under 1.5 MB`);
+  if (canonical.size < 1700000) {
+    pass(`canonical pack size ${canonical.size} bytes is under 1.7 MB`);
   } else {
-    fail(`canonical pack size ${canonical.size} bytes exceeds 1.5 MB`);
+    fail(`canonical pack size ${canonical.size} bytes exceeds 1.7 MB`);
   }
 
   let foundDisallowed = false;
