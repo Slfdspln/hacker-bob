@@ -18,8 +18,41 @@ const {
 } = require("./install.js");
 const {
   adapterIdsForSelection,
+  detectAdapterId,
   getAdapter,
 } = require("../adapters/index.js");
+
+// When --adapter is omitted on doctor/uninstall, prefer to act on whatever is
+// actually installed in this project rather than the install-time default.
+// Returns { ids, reason } parallel to scripts/install.js#resolveInstallAdapters.
+function resolveLifecycleAdapters(targetAbs, options = {}) {
+  const explicit = adapterIdsForSelection(options.adapter || options.adapters, { defaultIds: [] });
+  if (explicit.length > 0) {
+    return { ids: explicit, reason: "explicit_flag" };
+  }
+
+  let installed = [];
+  try {
+    installed = installedAdapterIds(targetAbs);
+  } catch {
+    installed = [];
+  }
+  if (installed.length > 0) {
+    return { ids: installed, reason: "installed_adapters" };
+  }
+
+  const detection = detectAdapterId(targetAbs, options.detectionOptions || {});
+  return { ids: [detection.id], reason: detection.reason, detection };
+}
+
+function defaultLogLifecycleResolution(resolution, command) {
+  if (resolution.reason === "explicit_flag") return;
+  const noun = resolution.ids.length > 1 ? "adapters" : "adapter";
+  process.stderr.write(
+    `hacker-bob ${command}: auto-selected ${noun} ${resolution.ids.join(", ")} (reason: ${resolution.reason})\n` +
+    `  Override with --adapter <claude|codex|generic-mcp|all>\n`,
+  );
+}
 
 const LEGACY_CLAUDE_RESOURCE_DIR = ".claude";
 const ROOT_MCP_ADAPTER_IDS = Object.freeze(["claude", "generic-mcp"]);
@@ -266,7 +299,11 @@ function httpxAvailable() {
 function doctorProject(projectDir, options = {}) {
   const sourceRoot = path.resolve(options.sourceRoot || path.join(__dirname, ".."));
   const targetAbs = path.resolve(projectDir || ".");
-  const adapterIds = adapterIdsForSelection(options.adapter || options.adapters);
+  const adapterResolution = resolveLifecycleAdapters(targetAbs, options);
+  const adapterIds = adapterResolution.ids;
+  const logResolution = options.onAdapterResolution
+    || ((resolution) => defaultLogLifecycleResolution(resolution, "doctor"));
+  logResolution(adapterResolution);
   const checks = [];
 
   if (nodeMajor(process.versions.node) >= 20) {
@@ -527,10 +564,14 @@ function pruneManagedDirs(targetAbs, result, { adapterIds, removeShared }) {
 function uninstallProject(projectDir, options = {}) {
   const sourceRoot = path.resolve(options.sourceRoot || path.join(__dirname, ".."));
   const targetAbs = path.resolve(projectDir || ".");
-  const adapterIds = adapterIdsForSelection(options.adapter || options.adapters);
   if (!dirExists(targetAbs)) {
     throw new Error(`Uninstall target does not exist or is not a directory: ${targetAbs}`);
   }
+  const adapterResolution = resolveLifecycleAdapters(targetAbs, options);
+  const adapterIds = adapterResolution.ids;
+  const logResolution = options.onAdapterResolution
+    || ((resolution) => defaultLogLifecycleResolution(resolution, "uninstall"));
+  logResolution(adapterResolution);
   const installedBefore = adapterIdsForSelection([
     ...installedAdapterIds(targetAbs),
     ...detectInstalledAdapterIds(targetAbs),

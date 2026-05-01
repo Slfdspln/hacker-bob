@@ -256,6 +256,10 @@ test("Claude project env syntax stays adapter-scoped or compatibility-scoped", (
   const expected = new Set([
     path.join("mcp", "lib", "runtime-resources.js"),
     path.join("scripts", "lib", "claude-role-renderer.js"),
+    // bin/hacker-bob.js is the cross-adapter CLI; its help text documents
+    // host-specific env markers (CLAUDE_PROJECT_DIR, CODEX_HOME) as detection
+    // signals. The mention is documentation, not runtime coupling.
+    path.join("bin", "hacker-bob.js"),
   ]);
   for (const root of ["mcp", "scripts", "bin"]) {
     for (const relativePath of allJsFiles(root)) {

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { execFile, execFileSync } = require("node:child_process");
+const { execFile, execFileSync, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
@@ -22,7 +22,10 @@ test("CLI help explains per-project installs and global CLI behavior", () => {
   for (const command of ["install", "update", "check-update", "doctor", "uninstall"]) {
     assert.match(output, new RegExp(`hacker-bob ${command}`));
   }
+  assert.match(output, /Bob auto-selects/);
   assert.match(output, /default host adapter is Claude/);
+  assert.match(output, /\$CLAUDE_PROJECT_DIR/);
+  assert.match(output, /\$CODEX_HOME/);
   assert.match(output, /--adapter claude\|codex\|generic-mcp\|all/);
   assert.match(output, /Global npm install only adds this CLI to PATH/);
   assert.match(output, /Uninstall defaults to dry-run/);
@@ -235,6 +238,227 @@ test("CLI uninstall of one adapter preserves remaining adapters and shared runti
     assert.ok(mcp.mcpServers.bountyagent);
     const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
     assert.deepEqual(finalMeta.installed_adapters, ["generic-mcp"]);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI auto-selects claude (default fallback) on a fresh install with no --adapter and logs the reason", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-detect-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+  const cleanEnv = { ...process.env, HOME: tempHome };
+  delete cleanEnv.CLAUDE_PROJECT_DIR;
+  delete cleanEnv.CODEX_HOME;
+  // Strip PATH so the CLI-on-PATH detection layer sees neither claude nor codex.
+  cleanEnv.PATH = "/usr/bin:/bin";
+
+  try {
+    const result = spawnSync(process.execPath, [CLI, "install", workspace], {
+      cwd: ROOT,
+      env: cleanEnv,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `install failed: ${result.stderr}`);
+    assert.match(result.stderr, /auto-selected adapter claude/, `stderr should mention auto-select; got: ${result.stderr}`);
+    assert.match(result.stderr, /reason: default_fallback/);
+    const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(installMeta.installed_adapters, ["claude"]);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI generic-mcp install writes mcpServers.bountyagent into .mcp.json", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-generic-presence-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "generic-mcp"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+    const mcp = JSON.parse(fs.readFileSync(path.join(workspace, ".mcp.json"), "utf8"));
+    assert.ok(mcp.mcpServers && mcp.mcpServers.bountyagent, "mcpServers.bountyagent should be present after generic-mcp install");
+    assert.equal(mcp.mcpServers.bountyagent.command, "node");
+    assert.ok(
+      Array.isArray(mcp.mcpServers.bountyagent.args)
+        && mcp.mcpServers.bountyagent.args.some((arg) => arg.endsWith(path.join("mcp", "server.js"))),
+      `mcpServers.bountyagent.args should reference mcp/server.js; got: ${JSON.stringify(mcp.mcpServers.bountyagent.args)}`,
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI no-flag uninstall on multi-adapter install removes everything that was installed", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-uninstall-multi-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "all"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+    const installed = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(installed.installed_adapters, ["claude", "codex", "generic-mcp"]);
+
+    const cleanEnv = { ...process.env, HOME: tempHome };
+    delete cleanEnv.CLAUDE_PROJECT_DIR;
+    delete cleanEnv.CODEX_HOME;
+    const result = spawnSync(process.execPath, [CLI, "uninstall", workspace, "--yes", "--json"], {
+      cwd: ROOT,
+      env: cleanEnv,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `uninstall failed: ${result.stderr}`);
+    assert.match(result.stderr, /reason: installed_adapters/);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp"]);
+    assert.deepEqual(parsed.remaining_adapters, []);
+    assert.equal(parsed.remove_shared, true);
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(tempHome, ".codex", "skills", "bob-hunt", "SKILL.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".hacker-bob", "generic-mcp", "hacker-bob.md")));
+    assert.ok(!fs.existsSync(path.join(workspace, "mcp", "server.js")));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI no-flag doctor on multi-adapter install runs checks for every installed adapter", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-doctor-multi-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "all"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+
+    const cleanEnv = { ...process.env, HOME: tempHome };
+    delete cleanEnv.CLAUDE_PROJECT_DIR;
+    delete cleanEnv.CODEX_HOME;
+    const result = spawnSync(process.execPath, [CLI, "doctor", workspace, "--json"], {
+      cwd: ROOT,
+      env: cleanEnv,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `doctor failed: ${result.stderr}`);
+    assert.match(result.stderr, /reason: installed_adapters/);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.adapters.sort(), ["claude", "codex", "generic-mcp"]);
+    const checkIds = new Set(parsed.checks.map((check) => check.id));
+    // Each adapter should contribute at least one check id with its own prefix.
+    assert.ok([...checkIds].some((id) => id.startsWith("claude_")), "expected at least one claude_* check");
+    assert.ok([...checkIds].some((id) => id.startsWith("codex_")), "expected at least one codex_* check");
+    assert.ok([...checkIds].some((id) => id.startsWith("generic_mcp_") || id.includes("generic")), "expected at least one generic-mcp check");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI no-flag update on a previously-installed codex project keeps codex (does not flip to claude)", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-update-preserve-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "codex"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+
+    const cleanEnv = { ...process.env, HOME: tempHome };
+    delete cleanEnv.CLAUDE_PROJECT_DIR;
+    delete cleanEnv.CODEX_HOME;
+    const result = spawnSync(process.execPath, [CLI, "update", workspace], {
+      cwd: ROOT,
+      env: cleanEnv,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `update failed: ${result.stderr}`);
+    assert.match(result.stderr, /reason: reinstall_metadata/);
+    const meta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(meta.installed_adapters, ["codex"]);
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI auto-selects codex when project has .codex/plugins/ and no --adapter flag", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-detect-codex-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(path.join(workspace, ".codex", "plugins"), { recursive: true });
+  const cleanEnv = { ...process.env, HOME: tempHome };
+  delete cleanEnv.CLAUDE_PROJECT_DIR;
+  delete cleanEnv.CODEX_HOME;
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace], {
+      cwd: ROOT,
+      env: cleanEnv,
+      stdio: "pipe",
+    });
+    const installMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(installMeta.installed_adapters, ["codex"]);
+    assert.ok(fs.existsSync(path.join(workspace, ".codex", "plugins", "hacker-bob", ".codex-plugin", "plugin.json")));
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "settings.json")));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI reinstall with no --adapter preserves previously-installed adapter mix", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-detect-reinstall-"));
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "bob-cli-home-"));
+  const workspace = path.join(tempRoot, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+
+  try {
+    execFileSync(process.execPath, [CLI, "install", workspace, "--adapter", "codex"], {
+      cwd: ROOT,
+      env: { ...process.env, HOME: tempHome },
+      stdio: "pipe",
+    });
+    const initialMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(initialMeta.installed_adapters, ["codex"]);
+
+    // Reinstall without --adapter; the installer must keep codex (and not silently flip to claude).
+    const cleanEnv = { ...process.env, HOME: tempHome };
+    delete cleanEnv.CLAUDE_PROJECT_DIR;
+    delete cleanEnv.CODEX_HOME;
+    const reinstall = spawnSync(process.execPath, [CLI, "install", workspace], {
+      cwd: ROOT,
+      env: cleanEnv,
+      encoding: "utf8",
+    });
+    assert.equal(reinstall.status, 0, `reinstall failed: ${reinstall.stderr}`);
+    assert.match(reinstall.stderr, /reason: reinstall_metadata/);
+    const finalMeta = JSON.parse(fs.readFileSync(path.join(workspace, ".hacker-bob", "install.json"), "utf8"));
+    assert.deepEqual(finalMeta.installed_adapters, ["codex"]);
+    assert.ok(!fs.existsSync(path.join(workspace, ".claude", "skills", "bob-hunt", "SKILL.md")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(tempHome, { recursive: true, force: true });

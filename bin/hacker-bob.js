@@ -23,7 +23,11 @@ function usageText() {
   hacker-bob doctor <project-dir> [--adapter claude|codex|generic-mcp|all] [--json]
   hacker-bob uninstall <project-dir> [--adapter claude|codex|generic-mcp|all] [--dry-run] [--yes] [--json]
 
-Installs Hacker Bob into one project directory per command. The default host adapter is Claude.
+Installs Hacker Bob into one project directory per command. If --adapter is omitted,
+Bob auto-selects based on (1) prior install metadata, (2) host env markers
+($CLAUDE_PROJECT_DIR, $CODEX_HOME), (3) project files (.claude/, .codex/plugins/,
+.agents/plugins/, .mcp.json), or (4) host CLI on PATH; the default host adapter is Claude.
+The selected adapter and reason are logged to stderr; pass --adapter to override.
 Use --adapter codex, --adapter generic-mcp, or --adapter all for other host surfaces.
 Global npm install only adds this CLI to PATH; it does not install Bob into every project.
 Uninstall defaults to dry-run; pass --yes to remove Bob-managed files and config entries.`;

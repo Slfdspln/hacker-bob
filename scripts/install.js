@@ -8,6 +8,7 @@ const { spawnSync } = require("child_process");
 const {
   ALL_ADAPTER_IDS,
   adapterIdsForSelection,
+  detectAdapterId,
   getAdapter,
 } = require("../adapters/index.js");
 
@@ -252,17 +253,53 @@ function patchrightAvailable(targetAbs, sourceRoot) {
   }
 }
 
+// Resolve which adapters to install when --adapter may be omitted.
+// Precedence: explicit flag → reinstall metadata → layered detection.
+// Returns { ids, reason, detection? } so the caller can log the decision.
+function resolveInstallAdapters(targetAbs, options = {}) {
+  const explicit = adapterIdsForSelection(options.adapter || options.adapters, { defaultIds: [] });
+  if (explicit.length > 0) {
+    return { ids: explicit, reason: "explicit_flag" };
+  }
+
+  let existing = [];
+  try {
+    existing = installedAdapterIds(targetAbs);
+  } catch {
+    existing = [];
+  }
+  if (existing.length > 0) {
+    return { ids: existing, reason: "reinstall_metadata" };
+  }
+
+  const detection = detectAdapterId(targetAbs, options.detectionOptions || {});
+  return { ids: [detection.id], reason: detection.reason, detection };
+}
+
+function defaultLogResolution(resolution) {
+  if (resolution.reason === "explicit_flag") return;
+  const noun = resolution.ids.length > 1 ? "adapters" : "adapter";
+  process.stderr.write(
+    `hacker-bob: auto-selected ${noun} ${resolution.ids.join(", ")} (reason: ${resolution.reason})\n` +
+    `  Override with --adapter <claude|codex|generic-mcp|all>\n`,
+  );
+}
+
 function installProject(projectDir, options = {}) {
   const sourceRoot = path.resolve(options.sourceRoot || path.join(__dirname, ".."));
   const targetAbs = path.resolve(projectDir || ".");
   const bobResourceDir = path.join(targetAbs, BOB_RESOURCE_DIR);
   const manifest = packageManifest(sourceRoot);
-  const adapterIds = adapterIdsForSelection(options.adapter || options.adapters);
   const installerSource = options.installerSource || process.env.HACKER_BOB_INSTALLER_SOURCE || "cli";
 
   if (!fs.existsSync(targetAbs) || !fs.statSync(targetAbs).isDirectory()) {
     throw new Error(`Install target does not exist or is not a directory: ${targetAbs}`);
   }
+
+  const adapterResolution = resolveInstallAdapters(targetAbs, options);
+  const adapterIds = adapterResolution.ids;
+  const logResolution = options.onAdapterResolution || defaultLogResolution;
+  logResolution(adapterResolution);
 
   const existingAdapters = installedAdapterIds(targetAbs);
   fs.mkdirSync(bobResourceDir, { recursive: true });
@@ -460,6 +497,7 @@ module.exports = {
   NEUTRAL_INSTALL_SCHEMA_VERSION,
   RESOURCE_SETS,
   commandExists,
+  defaultLogResolution,
   detectInstalledAdapterIds,
   installProject,
   installedAdapterIds,
@@ -468,5 +506,6 @@ module.exports = {
   patchrightAvailable,
   printInstallSummary,
   readNeutralInstallMetadata,
+  resolveInstallAdapters,
   writeNeutralInstallMetadata,
 };
