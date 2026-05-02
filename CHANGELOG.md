@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Capability-pack tightening — Phase A: per-pack tool bundles
+
+- Removed the legacy `hunter` MCP role bundle. Bundle membership is now per-chain: `hunter-shared` (cross-cutting state-machine tools used by every hunter), `hunter-web`, `hunter-evm`, `hunter-svm`, `hunter-move`, `hunter-substrate`, `hunter-cosmwasm`.
+- Each capability pack and each hunter role now declares `[hunter-shared, hunter-<chain>]`. SC hunter agent tool counts dropped from 38 → 10–13. Web hunter stays at 14.
+- `bounty_record_surface_leads` and `bounty_read_surface_leads` moved from `hunter-shared` to `hunter-web` because the deep-mode lead-promotion flow is web-recon only; SC hunter prompts never invoked them. Brutalist roast surfaced this as silent allowlist cruft.
+- Refreshed checked-in `.claude/settings.json` so `SubagentStop` matchers cover all six hunter agents (was stale at `hunter-agent` only). Direct-from-repo Claude usage now fires the stop hook for SC hunters.
+- Added two new prompt-contract tests:
+  - **pack ↔ role bundle consistency**: each `CAPABILITY_PACKS[pack].role_bundles` must equal the routed Claude role's `mcp_role_bundles`. Catches drift between `capability-packs.js` and `role-model.js` at test time, before silent misrouting at runtime.
+  - **hunter MCP-tool budget**: each routed hunter agent must stay ≤16 MCP tools. Forces a code review conversation before a maintainer adds a tool to `hunter-shared` that re-creates the pre-Phase-A monolith.
+- Known scope-deferred follow-ups (filed against later phases of the capability-pack roadmap, not blockers): `verifier` and `evidence` role bundles still carry all 21 SC tools as polymorphic dispatchers (Phase D); the generic `SPAWN_HUNTER_AGENT` template still embeds web-flavored instructions even when used for SC hunters (Phase E); `recon-agent` and `deep-recon-agent` do not yet emit `chain_family` so SC surface routing today depends on operator-supplied or spec-seeded surfaces.
+
 ### Capability-pack routing (merged from main)
 
 - Added `mcp/lib/capability-packs.js` with a `web` pack and five smart-contract packs (`smart_contract_evm`, `smart_contract_svm`, `smart_contract_move`, `smart_contract_substrate`, `smart_contract_cosmwasm`). Each pack pins a `hunter_agent`, `brief_profile`, and role bundle; SC packs route by `surface.chain_family` (Aptos and Sui both go to `hunter-move-agent`).

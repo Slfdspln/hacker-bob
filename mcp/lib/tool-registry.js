@@ -7,12 +7,20 @@ const VALID_ROLE_BUNDLES = Object.freeze([
   "chain",
   "evidence",
   "grader",
-  "hunter",
+  "hunter-shared",
   "hunter-web",
+  "hunter-evm",
+  "hunter-svm",
+  "hunter-move",
+  "hunter-substrate",
+  "hunter-cosmwasm",
   "orchestrator",
   "reporter",
   "router",
   "verifier",
+  // legacy "hunter" bundle removed in capability-pack tightening; bundle
+  // membership is now per-chain (hunter-evm, hunter-svm, hunter-move,
+  // hunter-substrate, hunter-cosmwasm) plus a cross-cutting hunter-shared.
 ]);
 const REQUIRED_FIELDS = Object.freeze([
   "name",

@@ -30,7 +30,7 @@ const AGENT_TOOL_SPECS = Object.freeze({
     extras: ["Read"],
   },
   "hunter-agent.md": {
-    roleBundles: ["hunter-web"],
+    roleBundles: ["hunter-shared", "hunter-web"],
     extras: ["Bash", "Read", "Grep", "Glob"],
   },
   "brutalist-verifier.md": {

@@ -34,7 +34,7 @@ module.exports = Object.freeze({
     ]
   },
   handler: readHunterBrief,
-  role_bundles: ["hunter", "hunter-web"],
+  role_bundles: ["hunter-shared"],
   mutating: false,
   global_preapproval: true,
   network_access: false,

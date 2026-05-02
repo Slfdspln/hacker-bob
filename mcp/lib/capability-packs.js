@@ -4,7 +4,7 @@ const WEB_CAPABILITY_PACK = Object.freeze({
   id: "web",
   hunter_agent: "hunter-agent",
   brief_profile: "web",
-  role_bundles: Object.freeze(["hunter-web"]),
+  role_bundles: Object.freeze(["hunter-shared", "hunter-web"]),
   completion_gate: "web_wave_handoff",
 });
 
@@ -12,7 +12,7 @@ const SMART_CONTRACT_EVM_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_evm",
   hunter_agent: "hunter-evm-agent",
   brief_profile: "smart_contract_evm",
-  role_bundles: Object.freeze(["hunter"]),
+  role_bundles: Object.freeze(["hunter-shared", "hunter-evm"]),
   completion_gate: "smart_contract_wave_handoff",
 });
 
@@ -20,7 +20,7 @@ const SMART_CONTRACT_SVM_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_svm",
   hunter_agent: "hunter-svm-agent",
   brief_profile: "smart_contract_svm",
-  role_bundles: Object.freeze(["hunter"]),
+  role_bundles: Object.freeze(["hunter-shared", "hunter-svm"]),
   completion_gate: "smart_contract_wave_handoff",
 });
 
@@ -28,7 +28,7 @@ const SMART_CONTRACT_MOVE_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_move",
   hunter_agent: "hunter-move-agent",
   brief_profile: "smart_contract_move",
-  role_bundles: Object.freeze(["hunter"]),
+  role_bundles: Object.freeze(["hunter-shared", "hunter-move"]),
   completion_gate: "smart_contract_wave_handoff",
 });
 
@@ -36,7 +36,7 @@ const SMART_CONTRACT_SUBSTRATE_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_substrate",
   hunter_agent: "hunter-substrate-agent",
   brief_profile: "smart_contract_substrate",
-  role_bundles: Object.freeze(["hunter"]),
+  role_bundles: Object.freeze(["hunter-shared", "hunter-substrate"]),
   completion_gate: "smart_contract_wave_handoff",
 });
 
@@ -44,7 +44,7 @@ const SMART_CONTRACT_COSMWASM_CAPABILITY_PACK = Object.freeze({
   id: "smart_contract_cosmwasm",
   hunter_agent: "hunter-cosmwasm-agent",
   brief_profile: "smart_contract_cosmwasm",
-  role_bundles: Object.freeze(["hunter"]),
+  role_bundles: Object.freeze(["hunter-shared", "hunter-cosmwasm"]),
   completion_gate: "smart_contract_wave_handoff",
 });
 

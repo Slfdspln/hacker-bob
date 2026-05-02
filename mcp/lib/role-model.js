@@ -57,37 +57,37 @@ const ROLE_DEFINITIONS = Object.freeze({
   hunter: Object.freeze({
     id: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter.md"),
-    mcp_role_bundles: Object.freeze(["hunter-web"]),
+    mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-web"]),
   }),
   "hunter-evm": Object.freeze({
     id: "hunter-evm",
     family: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-evm.md"),
-    mcp_role_bundles: Object.freeze(["hunter"]),
+    mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-evm"]),
   }),
   "hunter-svm": Object.freeze({
     id: "hunter-svm",
     family: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-svm.md"),
-    mcp_role_bundles: Object.freeze(["hunter"]),
+    mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-svm"]),
   }),
   "hunter-move": Object.freeze({
     id: "hunter-move",
     family: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-move.md"),
-    mcp_role_bundles: Object.freeze(["hunter"]),
+    mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-move"]),
   }),
   "hunter-substrate": Object.freeze({
     id: "hunter-substrate",
     family: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-substrate.md"),
-    mcp_role_bundles: Object.freeze(["hunter"]),
+    mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-substrate"]),
   }),
   "hunter-cosmwasm": Object.freeze({
     id: "hunter-cosmwasm",
     family: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter-cosmwasm.md"),
-    mcp_role_bundles: Object.freeze(["hunter"]),
+    mcp_role_bundles: Object.freeze(["hunter-shared", "hunter-cosmwasm"]),
   }),
   chain: Object.freeze({
     id: "chain",

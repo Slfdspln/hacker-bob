@@ -803,8 +803,8 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.deepEqual(TOOL_MANIFEST.bounty_read_pipeline_analytics.role_bundles, ["orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_finalize_hunter_run.mutating, true);
   assert.equal(TOOL_MANIFEST.bounty_finalize_hunter_run.global_preapproval, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_finalize_hunter_run.role_bundles, ["hunter", "hunter-web"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter", "hunter-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_finalize_hunter_run.role_bundles, ["hunter-shared"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter-web", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.mutating, true);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.network_access, false);
@@ -813,7 +813,7 @@ test("MCP per-tool modules preserve representative tool behavior", () => {
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.sensitive_output, false);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.hook_required, false);
   assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.session_artifacts_written, ["surface-leads.json"]);
-  assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.role_bundles, ["hunter", "hunter-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_read_surface_leads.role_bundles, ["hunter-web", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.mutating, false);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.network_access, false);
@@ -848,7 +848,7 @@ test("MCP tool registry validation rejects incomplete or inconsistent entries", 
     description: "Test tool.",
     inputSchema: { type: "object", properties: {} },
     handler: () => ({}),
-    role_bundles: ["hunter"],
+    role_bundles: ["hunter-shared"],
     mutating: false,
     global_preapproval: true,
     network_access: false,
@@ -6796,7 +6796,7 @@ test("svm tools register with verifier and evidence role bundles (so balanced/br
   for (const name of tools) {
     const meta = TOOL_MANIFEST[name];
     assert.ok(meta, `${name} is in TOOL_MANIFEST`);
-    assert.deepEqual(meta.role_bundles, ["hunter", "verifier", "evidence"], `${name} exposes role_bundles=[hunter, verifier, evidence]`);
+    assert.deepEqual(meta.role_bundles, ["hunter-svm", "verifier", "evidence"], `${name} exposes role_bundles=[hunter-svm, verifier, evidence]`);
     assert.equal(meta.network_access, true, `${name} declares network_access`);
   }
 });
@@ -7365,7 +7365,7 @@ test("Move tools register with verifier and evidence role bundles (so balanced/b
   for (const name of tools) {
     const meta = TOOL_MANIFEST[name];
     assert.ok(meta, `${name} is in TOOL_MANIFEST`);
-    assert.deepEqual(meta.role_bundles, ["hunter", "verifier", "evidence"], `${name} exposes role_bundles=[hunter, verifier, evidence]`);
+    assert.deepEqual(meta.role_bundles, ["hunter-move", "verifier", "evidence"], `${name} exposes role_bundles=[hunter-move, verifier, evidence]`);
     assert.equal(meta.network_access, true, `${name} declares network_access`);
   }
 });

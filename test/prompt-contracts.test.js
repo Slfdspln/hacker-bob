@@ -17,6 +17,7 @@ const {
 const {
   allRoleDefinitions,
   mcpToolNamesForRole,
+  roleDefinition,
 } = require("../mcp/lib/role-model.js");
 const {
   CLAUDE_ROLE_SPECS,
@@ -34,6 +35,7 @@ const {
   toolsForSpec,
 } = require("../scripts/generate-agent-tools.js");
 const {
+  CAPABILITY_PACKS,
   hunterAgentNamesForCapabilityPacks,
 } = require("../mcp/lib/capability-packs.js");
 
@@ -349,12 +351,12 @@ test("surface-router-agent is thin and cannot hunt or write directly", () => {
   assert.match(document, /Do not do recon, hunting, auth, HTTP requests, browser work, Bash, or direct file writes/);
 });
 
-test("generated hunter-agent tools come from the hunter-web bundle", () => {
+test("generated hunter-agent tools come from the hunter-shared and hunter-web bundles only", () => {
   const spec = AGENT_TOOL_SPECS["hunter-agent.md"];
-  assert.deepEqual(spec.roleBundles, ["hunter-web"]);
+  assert.deepEqual(spec.roleBundles, ["hunter-shared", "hunter-web"]);
   assert.deepEqual(
     toolsForSpec(spec).filter((tool) => tool.startsWith("mcp__bountyagent__")).sort(),
-    permissionsForRoleBundles(["hunter-web"]).sort(),
+    permissionsForRoleBundles(["hunter-shared", "hunter-web"]).sort(),
   );
 });
 
@@ -398,7 +400,7 @@ test("manifest, settings, and generated Claude config keep global MCP permission
   assert.deepEqual(TOOL_MANIFEST.bounty_route_surfaces.role_bundles, ["orchestrator", "router"]);
   assert.equal(TOOL_MANIFEST.bounty_route_surfaces.global_preapproval, false);
   assert.equal(TOOL_MANIFEST.bounty_route_surfaces.mutating, true);
-  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter", "hunter-web", "orchestrator"]);
+  assert.deepEqual(TOOL_MANIFEST.bounty_record_surface_leads.role_bundles, ["hunter-web", "orchestrator"]);
   assert.equal(TOOL_MANIFEST.bounty_record_surface_leads.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_read_surface_leads.global_preapproval, true);
   assert.equal(TOOL_MANIFEST.bounty_promote_surface_leads.global_preapproval, false);
@@ -1076,6 +1078,71 @@ test("SubagentStop hooks cover every routed capability-pack hunter agent", () =>
     .sort();
 
   assert.deepEqual(configuredHunters, expectedHunters);
+});
+
+test("checked-in .claude/settings.json SubagentStop matches every capability-pack hunter agent", () => {
+  // The repo-local settings.json is what direct-from-repo Claude usage reads
+  // (e.g., when developing the framework itself or running ./dev-sync.sh).
+  // It must stay in lock-step with defaultClaudeSettings() — otherwise SC
+  // hunter stop hooks silently fail to fire in repo-local runs.
+  const checkedInSettings = JSON.parse(readFile(".claude/settings.json"));
+  const expectedHunters = hunterAgentNamesForCapabilityPacks().sort();
+  const checkedInHunters = (checkedInSettings.hooks.SubagentStop || [])
+    .filter((entry) => (entry.hooks || []).some((hook) => /hunter-subagent-stop\.js/.test(hook.command)))
+    .map((entry) => entry.matcher)
+    .sort();
+
+  assert.deepEqual(checkedInHunters, expectedHunters);
+});
+
+test("each capability pack's role_bundles match the routed Claude role's mcp_role_bundles", () => {
+  // pack -> role drift would silently misroute or drop tools at spawn time.
+  // Build agent_name -> role_id from CLAUDE_ROLE_SPECS and assert lock-step.
+  const agentNameToRoleId = {};
+  for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
+    if (spec.kind === "agent" && typeof spec.output_path === "string") {
+      const agentName = path.basename(spec.output_path).replace(/\.md$/, "");
+      agentNameToRoleId[agentName] = roleId;
+    }
+  }
+  for (const pack of Object.values(CAPABILITY_PACKS)) {
+    const roleId = agentNameToRoleId[pack.hunter_agent];
+    assert.ok(
+      roleId,
+      `capability pack ${pack.id} hunter_agent ${pack.hunter_agent} has no Claude role spec`,
+    );
+    const role = roleDefinition(roleId);
+    const packBundles = Array.from(pack.role_bundles).sort();
+    const roleBundles = Array.from(role.mcp_role_bundles).sort();
+    assert.deepEqual(
+      packBundles,
+      roleBundles,
+      `capability pack ${pack.id}.role_bundles (${packBundles.join(",")}) must equal role ${roleId}.mcp_role_bundles (${roleBundles.join(",")})`,
+    );
+  }
+});
+
+test("hunter agent tool counts stay bounded under capability packs (anti-cruft budget)", () => {
+  // Cap each routed hunter at 16 MCP tools. Crossing the cap means new tools
+  // were added to hunter-shared (or a chain bundle) without justification —
+  // the path of least resistance that re-creates the pre-Phase-A 38-tool
+  // monolith. Forces a code review conversation.
+  const HUNTER_MCP_TOOL_BUDGET = 16;
+  const agentNameToRoleId = {};
+  for (const [roleId, spec] of Object.entries(CLAUDE_ROLE_SPECS)) {
+    if (spec.kind === "agent" && typeof spec.output_path === "string") {
+      const agentName = path.basename(spec.output_path).replace(/\.md$/, "");
+      agentNameToRoleId[agentName] = roleId;
+    }
+  }
+  for (const pack of Object.values(CAPABILITY_PACKS)) {
+    const roleId = agentNameToRoleId[pack.hunter_agent];
+    const tools = mcpToolNamesForRole(roleId);
+    assert.ok(
+      tools.length <= HUNTER_MCP_TOOL_BUDGET,
+      `pack ${pack.id} hunter ${pack.hunter_agent} has ${tools.length} MCP tools (budget ${HUNTER_MCP_TOOL_BUDGET}); justify or split before raising the cap`,
+    );
+  }
 });
 
 test("verifier and grader examples use F-N finding IDs", () => {
