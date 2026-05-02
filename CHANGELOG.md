@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Capability-pack tightening — Phase B: profile-shaped hunter briefs
+
+- `bounty_read_hunter_brief` now dispatches by `routeMetadata.brief_profile` to one of two builders. Web profile carries HTTP-flavored intel (`bypass_table`, `techniques`, `payload_hints`, `knowledge_summary`, `traffic_summary`, `audit_summary`, `circuit_breaker_summary`, `intel_hints`, `static_scan_hints`, `auth_profiles_hint`). Smart-contract profiles carry on-chain context (`bob_spec_status` filtered to the assigned surface, `rpc_pool` for the surface's `chain_family`/`chain_id`). Cross-cutting fields stay in both.
+- Per-chain harness path scalars (`anchor_harness_path`, `move_harness_path`, `ink_harness_path`, `cargo_harness_path`, `cosmwasm_harness_path`) are now whitelisted in the slim-surface scalar limits. Previously only `foundry_harness_path` was preserved, which meant SVM/Move/Substrate/CosmWasm hunters' assigned harness paths were silently stripped — hunters then incorrectly recorded `blocked_harness_runs` and wrote partial handoffs.
+- `rankAttackSurfaces` (which reads traffic and public-intel files to compute web-only summaries) is now skipped for non-web profiles. SC briefs no longer pay that I/O cost.
+- Profile dispatch fails loudly on an unknown profile rather than falling open into the smart-contract path, so adding a non-web/non-SC pack requires an explicit dispatch-table entry.
+- Updated the `bounty_read_hunter_brief` tool description and the orchestrator prompt to reflect the per-profile shape.
+- Brutalist roast fed back: rejected per-chain SC builders today (YAGNI — all 5 SC packs converge on `bob_spec_status + rpc_pool`); kept `coverage_summary` in both profiles (write path is profile-agnostic, future wave merge depends on it); kept pretty-printed JSON output (transport already serializes compact when sending).
+- Tests added: web brief shape (positive presence of all web-flavored fields), SC brief shape (positive presence of `bob_spec_status` typed payload + `rpc_pool` typed payload, omission of all 10 web-flavored fields), per-chain harness-path round-trip (5 chain cases × scalar field), and profile-dispatch fail-loud (forging an unknown profile on disk throws). Measured byte size: web 8081B, EVM 2940B (64% reduction).
+
 ### Capability-pack tightening — Phase A: per-pack tool bundles
 
 - Removed the legacy `hunter` MCP role bundle. Bundle membership is now per-chain: `hunter-shared` (cross-cutting state-machine tools used by every hunter), `hunter-web`, `hunter-evm`, `hunter-svm`, `hunter-move`, `hunter-substrate`, `hunter-cosmwasm`.

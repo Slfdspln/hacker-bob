@@ -10032,8 +10032,191 @@ test("bounty_read_hunter_brief returns surface, exclusions, and valid IDs", () =
     assert.equal(brief.auth_hint, undefined);
     assert.match(brief.auth_profiles_hint, /bounty_list_auth_profiles/);
     assert.doesNotMatch(JSON.stringify(brief), /auth\.json/i);
+    // Web brief shape: include the HTTP-flavored intel fields, omit SC-only fields.
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "bypass_table"), "web brief must expose bypass_table");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "techniques"), "web brief must expose techniques");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "payload_hints"), "web brief must expose payload_hints");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "knowledge_summary"), "web brief must expose knowledge_summary");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "traffic_summary"), "web brief must expose traffic_summary");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "audit_summary"), "web brief must expose audit_summary");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "circuit_breaker_summary"), "web brief must expose circuit_breaker_summary");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "intel_hints"), "web brief must expose intel_hints");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "static_scan_hints"), "web brief must expose static_scan_hints");
     assert.strictEqual(brief.bob_spec_status, undefined);
     assert.strictEqual(brief.rpc_pool, undefined);
+  });
+});
+
+test("bounty_read_hunter_brief uses smart_contract_evm shape when the assignment routes to that pack", () => {
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, {
+      phase: "HUNT",
+      hunt_wave: 1,
+      pending_wave: 1,
+      dead_ends: [],
+      waf_blocked_endpoints: [],
+    });
+    seedAttackSurfaces(domain, [{
+      id: "surface-evm-1",
+      surface_type: "smart_contract",
+      chain_family: "evm",
+      chain_id: "1",
+      hosts: [`https://${domain}`],
+      foundry_harness_path: "/tmp/harness/evm",
+    }]);
+    seedAssignments(domain, 1, [{
+      agent: "a1",
+      surface_id: "surface-evm-1",
+      capability_pack: "smart_contract_evm",
+      hunter_agent: "hunter-evm-agent",
+      brief_profile: "smart_contract_evm",
+    }]);
+
+    const brief = JSON.parse(readHunterBrief({
+      target_domain: domain,
+      wave: "w1",
+      agent: "a1",
+    }));
+
+    assert.equal(brief.run_context.capability_pack, "smart_contract_evm");
+    assert.equal(brief.run_context.brief_profile, "smart_contract_evm");
+    assert.equal(brief.run_context.hunter_agent, "hunter-evm-agent");
+
+    // SC profile must expose typed bob_spec_status and rpc_pool, not just
+    // a present-but-undefined slot. hasOwnProperty + null-guard catches
+    // the regression where dispatch returns the wrong shape.
+    assert.ok(brief.bob_spec_status, "smart-contract brief must expose bob_spec_status");
+    assert.equal(typeof brief.bob_spec_status, "object");
+    assert.equal(typeof brief.bob_spec_status.present, "boolean");
+    assert.ok(Object.prototype.hasOwnProperty.call(brief, "rpc_pool"), "smart-contract brief must expose rpc_pool");
+    assert.equal(typeof brief.rpc_pool, "object");
+    assert.ok(Array.isArray(brief.rpc_pool.endpoints) || brief.rpc_pool.endpoints == null);
+    assert.equal(brief.surface.foundry_harness_path, "/tmp/harness/evm",
+      "EVM hunter must receive its foundry_harness_path scalar");
+
+    // SC profile: omit the web-flavored fields the SC hunter doesn't have tools for.
+    for (const webField of [
+      "bypass_table",
+      "techniques",
+      "payload_hints",
+      "knowledge_summary",
+      "traffic_summary",
+      "audit_summary",
+      "circuit_breaker_summary",
+      "intel_hints",
+      "static_scan_hints",
+      "auth_profiles_hint",
+    ]) {
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(brief, webField),
+        `smart-contract brief must omit ${webField} (web-flavored)`,
+      );
+    }
+
+    // Cross-cutting fields stay in both profiles.
+    for (const sharedField of [
+      "run_context",
+      "target_url",
+      "wave",
+      "agent",
+      "surface",
+      "surface_limits",
+      "valid_surface_ids",
+      "dead_ends",
+      "waf_blocked_endpoints",
+      "exclusions_summary",
+      "coverage_summary",
+      "ranking_summary",
+    ]) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(brief, sharedField),
+        `smart-contract brief must keep cross-cutting ${sharedField}`,
+      );
+    }
+  });
+});
+
+test("bounty_read_hunter_brief preserves per-chain harness paths for every smart-contract pack", () => {
+  // Phase B regression guard: slimSurfaceForBrief whitelists each chain's
+  // harness_path scalar. SVM/Move/Substrate/CosmWasm hunter prompts read
+  // anchor_harness_path / move_harness_path / ink_harness_path /
+  // cargo_harness_path / cosmwasm_harness_path; if those get stripped,
+  // hunters falsely report missing harnesses and write partial handoffs.
+  const cases = [
+    { pack: "smart_contract_svm",       chain_family: "svm",       agent: "hunter-svm-agent",       field: "anchor_harness_path",   value: "/tmp/harness/svm" },
+    { pack: "smart_contract_move",      chain_family: "aptos",     agent: "hunter-move-agent",      field: "move_harness_path",     value: "/tmp/harness/move" },
+    { pack: "smart_contract_substrate", chain_family: "substrate", agent: "hunter-substrate-agent", field: "ink_harness_path",      value: "/tmp/harness/ink" },
+    { pack: "smart_contract_substrate", chain_family: "substrate", agent: "hunter-substrate-agent", field: "cargo_harness_path",    value: "/tmp/harness/cargo" },
+    { pack: "smart_contract_cosmwasm",  chain_family: "cosmwasm",  agent: "hunter-cosmwasm-agent",  field: "cosmwasm_harness_path", value: "/tmp/harness/cw" },
+  ];
+  for (const { pack, chain_family, agent, field, value } of cases) {
+    withTempHome(() => {
+      const domain = "example.com";
+      seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
+      seedAttackSurfaces(domain, [{
+        id: "sc-1",
+        surface_type: "smart_contract",
+        chain_family,
+        chain_id: "1",
+        hosts: [`https://${domain}`],
+        [field]: value,
+      }]);
+      seedAssignments(domain, 1, [{
+        agent: "a1",
+        surface_id: "sc-1",
+        capability_pack: pack,
+        hunter_agent: agent,
+        brief_profile: pack,
+      }]);
+      const brief = JSON.parse(readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
+      assert.equal(brief.surface[field], value, `${pack} hunter must receive ${field}`);
+    });
+  }
+});
+
+test("bounty_read_hunter_brief throws on an unsupported brief_profile rather than fail-open to smart-contract", () => {
+  // Regression guard for fail-open: the dispatch must reject profiles the
+  // capability-pack registry never declared, even if route metadata is
+  // forged on disk.
+  withTempHome(() => {
+    const domain = "example.com";
+    seedSessionState(domain, { phase: "HUNT", hunt_wave: 1, pending_wave: 1 });
+    seedAttackSurface(domain, ["surface-a"]);
+    // We can't get an unsupported profile through normalizeAssignmentRouteMetadata
+    // because that itself validates against the pack registry. So we forge the
+    // assignment file directly to reach the dispatch.
+    const dir = sessionDir(domain);
+    const assignmentsPath = path.join(dir, "wave-1-assignments.json");
+    fs.writeFileSync(assignmentsPath, JSON.stringify({
+      wave_number: 1,
+      assignments: [{
+        agent: "a1",
+        surface_id: "surface-a",
+        capability_pack: "smart_contract_evm",
+        hunter_agent: "hunter-evm-agent",
+        brief_profile: "smart_contract_evm",
+      }],
+    }));
+    // Sanity: this assignment is valid and produces an SC brief.
+    JSON.parse(readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }));
+    // Mutate the on-disk assignment to a profile no pack declares. The
+    // route-metadata validator rejects it before dispatch, which is the
+    // correct fail-loud behavior.
+    fs.writeFileSync(assignmentsPath, JSON.stringify({
+      wave_number: 1,
+      assignments: [{
+        agent: "a1",
+        surface_id: "surface-a",
+        capability_pack: "experimental_mobile",
+        hunter_agent: "mobile-hunter-agent",
+        brief_profile: "mobile_api",
+      }],
+    }));
+    assert.throws(
+      () => readHunterBrief({ target_domain: domain, wave: "w1", agent: "a1" }),
+      /unknown capability_pack|Unsupported brief profile/,
+    );
   });
 });
 
