@@ -1149,6 +1149,103 @@ test("each capability pack's role_bundles match the routed Claude role's mcp_rol
   }
 });
 
+test("Phase E: every SC pack ships a complete spawn block consumed by the catalogue renderer", () => {
+  // The orchestrator skill embeds {{HUNTER_PACK_CATALOGUE}}; the renderer
+  // calls assertSpawnField() for every pack, so a missing or non-string
+  // spawn field will throw at render time. This test catches missing fields
+  // in the source registry without waiting for the renderer to throw.
+  const { BLOCKED_HARNESS_RUN_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
+  for (const pack of Object.values(CAPABILITY_PACKS)) {
+    assert.ok(pack.spawn, `pack ${pack.id} must declare a spawn block`);
+    assert.ok(typeof pack.spawn.profile === "string", `pack ${pack.id} spawn.profile must be a string`);
+    if (pack.spawn.profile === "smart_contract") {
+      for (const field of ["chain_family", "hunter_name_prefix", "chain_id_description", "workflow_summary", "cli_dependency", "blocked_harness_kind_options"]) {
+        assert.ok(
+          typeof pack.spawn[field] === "string" && pack.spawn[field].trim(),
+          `SC pack ${pack.id} spawn.${field} must be a non-empty string`,
+        );
+      }
+      // Every kind in blocked_harness_kind_options must be in the
+      // bounty_write_wave_handoff schema enum, otherwise hunters that
+      // follow the catalogue will fail finalization. Roast-derived guard.
+      const kinds = pack.spawn.blocked_harness_kind_options.split(/\s+or\s+/).map((t) => t.trim()).filter(Boolean);
+      for (const kind of kinds) {
+        assert.ok(
+          BLOCKED_HARNESS_RUN_KINDS.includes(kind),
+          `SC pack ${pack.id} blocked_harness_kind_options token "${kind}" must be in the bounty_write_wave_handoff schema enum`,
+        );
+      }
+    }
+  }
+});
+
+test("Phase E: bounty_write_wave_handoff schema enum stays in sync with renderer constant", () => {
+  // The renderer constant BLOCKED_HARNESS_RUN_KINDS mirrors the JSON-schema
+  // enum in mcp/lib/tools/write-wave-handoff.js. If the schema diverges
+  // (someone adds a kind to one place but not the other), this test fails
+  // before the divergence reaches a hunter at runtime.
+  const { BLOCKED_HARNESS_RUN_KINDS } = require("../mcp/lib/capability-packs-rendering.js");
+  const schema = require("../mcp/lib/tools/write-wave-handoff.js").inputSchema;
+  const enumFromSchema = schema.properties.blocked_harness_runs.items.properties.kind.enum;
+  assert.deepEqual(
+    [...BLOCKED_HARNESS_RUN_KINDS].sort(),
+    [...enumFromSchema].sort(),
+    "BLOCKED_HARNESS_RUN_KINDS must mirror the bounty_write_wave_handoff schema enum",
+  );
+});
+
+test("Phase E: rendered orchestrator catalogue lists every smart-contract pack exactly once", () => {
+  // Adding a 7th SC pack auto-extends the catalogue. The test enforces the
+  // 1:1 pack -> catalogue line invariant so a renderer regression that
+  // double-renders or skips a pack is caught immediately. Catalogue is
+  // keyed by capability_pack (the value bounty_start_wave actually returns
+  // on each assignment), not chain_family.
+  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
+  for (const pack of Object.values(CAPABILITY_PACKS)) {
+    if (pack.spawn.profile !== "smart_contract") continue;
+    const escaped = pack.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const lineRegex = new RegExp(`- \`capability_pack: "${escaped}"\` \\(chain_family \`[^\`]+\`\\) -> hunter_agent \`${pack.hunter_agent}\``, "g");
+    const matches = rendered.match(lineRegex) || [];
+    assert.equal(
+      matches.length,
+      1,
+      `rendered orchestrator catalogue must list pack ${pack.id} exactly once (found ${matches.length})`,
+    );
+  }
+});
+
+test("Phase E: renderer source files contain no per-chain workflow strings (pack.spawn is the only source)", () => {
+  // Anti-cruft: per-chain workflow strings must live in pack.spawn, not in
+  // the renderer source. Catching `bounty_evm_fetch_source -> read sources`
+  // (workflow head) or chain-family-specific cli dependencies in the
+  // renderer source means duplication is creeping back in. This test pins
+  // that the renderers stay registry-driven.
+  const claudeRenderer = readFile("scripts/lib/claude-role-renderer.js");
+  const codexRenderer = readFile("scripts/lib/codex-role-renderer.js");
+  const forbiddenWorkflowFragments = [
+    "bounty_evm_fetch_source -> read sources",
+    "bounty_svm_fetch_program (confirm",
+    "bounty_aptos_fetch_module (enumerate",
+    "bounty_sui_fetch_package (enumerate",
+    "bounty_substrate_fetch_runtime (confirm",
+    "bounty_cosmwasm_fetch_contract (confirm",
+  ];
+  for (const fragment of forbiddenWorkflowFragments) {
+    assert.ok(
+      !claudeRenderer.includes(fragment),
+      `claude-role-renderer.js must not inline workflow fragment "${fragment}" — move it to pack.spawn`,
+    );
+    assert.ok(
+      !codexRenderer.includes(fragment),
+      `codex-role-renderer.js must not inline workflow fragment "${fragment}" — move it to pack.spawn`,
+    );
+  }
+  // Also pin: no SPAWN_HUNTER_*_AGENT placeholder per-chain bodies in the
+  // renderer constants (Phase E removed them).
+  assert.doesNotMatch(claudeRenderer, /SPAWN_HUNTER_EVM_AGENT|SPAWN_HUNTER_SVM_AGENT|SPAWN_HUNTER_MOVE_AGENT|SPAWN_HUNTER_SUBSTRATE_AGENT|SPAWN_HUNTER_COSMWASM_AGENT/);
+  assert.doesNotMatch(codexRenderer, /SPAWN_HUNTER_EVM_AGENT|SPAWN_HUNTER_SVM_AGENT|SPAWN_HUNTER_MOVE_AGENT|SPAWN_HUNTER_SUBSTRATE_AGENT|SPAWN_HUNTER_COSMWASM_AGENT/);
+});
+
 test("hunter agent tool counts stay bounded under capability packs (anti-cruft budget)", () => {
   // Cap each routed hunter at 16 MCP tools. Crossing the cap means new tools
   // were added to hunter-shared (or a chain bundle) without justification —
@@ -1436,12 +1533,23 @@ test("hunter-svm prompt encodes the chain_family=svm anti-stop rule and sc_evide
   assert.match(prompt, /bounty_anchor_run/, "hunter-svm must document bounty_anchor_run");
 });
 
-test("orchestrator dispatches by chain_family to hunter-evm or hunter-svm", () => {
-  const prompt = readFile("prompts/roles/orchestrator.md");
-  assert.match(prompt, /SPAWN_HUNTER_EVM_AGENT/, "orchestrator must reference EVM hunter spawn");
-  assert.match(prompt, /SPAWN_HUNTER_SVM_AGENT/, "orchestrator must reference SVM hunter spawn");
-  assert.match(prompt, /chain_family.*evm|evm.*chain_family/i, "orchestrator must dispatch on chain_family for EVM");
-  assert.match(prompt, /chain_family.*svm|svm.*chain_family/i, "orchestrator must dispatch on chain_family for SVM");
+test("orchestrator dispatches by chain_family to hunter-evm or hunter-svm (Phase E pack-driven)", () => {
+  // Phase E: per-chain SPAWN_HUNTER_*_AGENT placeholders are gone. The
+  // orchestrator embeds a single {{HUNTER_PACK_CATALOGUE}} that the
+  // renderer fills from the pack registry; the rendered skill must list
+  // every SC pack's chain_family + hunter_agent in the catalogue lines.
+  const source = readFile("prompts/roles/orchestrator.md");
+  assert.match(source, /\{\{HUNTER_PACK_CATALOGUE\}\}/, "orchestrator source must embed the HUNTER_PACK_CATALOGUE placeholder");
+  assert.doesNotMatch(source, /SPAWN_HUNTER_EVM_AGENT|SPAWN_HUNTER_SVM_AGENT|SPAWN_HUNTER_MOVE_AGENT|SPAWN_HUNTER_SUBSTRATE_AGENT|SPAWN_HUNTER_COSMWASM_AGENT/, "Phase E removed per-chain spawn placeholders from orchestrator source");
+
+  assert.equal(CAPABILITY_PACKS.smart_contract_evm.spawn.chain_family, "evm");
+  assert.equal(CAPABILITY_PACKS.smart_contract_evm.hunter_agent, "hunter-evm-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_svm.spawn.chain_family, "svm");
+  assert.equal(CAPABILITY_PACKS.smart_contract_svm.hunter_agent, "hunter-svm-agent");
+
+  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
+  assert.match(rendered, /capability_pack: "smart_contract_evm".*hunter-evm-agent/, "rendered orchestrator must list smart_contract_evm -> hunter-evm-agent in catalogue");
+  assert.match(rendered, /capability_pack: "smart_contract_svm".*hunter-svm-agent/, "rendered orchestrator must list smart_contract_svm -> hunter-svm-agent in catalogue");
 });
 
 test("chain-builder prompt enumerates SVM patterns and enforces svm-cite-finding", () => {
@@ -1541,11 +1649,18 @@ test("hunter-move prompt encodes the chain_family={aptos,sui} branching and sc_e
   assert.match(prompt, /package_upgrade_authority/, "hunter-move must list package_upgrade_authority bug class");
 });
 
-test("orchestrator dispatches by chain_family to hunter-move (covers aptos + sui)", () => {
-  const prompt = readFile("prompts/roles/orchestrator.md");
-  assert.match(prompt, /SPAWN_HUNTER_MOVE_AGENT/, "orchestrator must reference Move hunter spawn");
-  assert.match(prompt, /chain_family.*aptos|aptos.*chain_family/i, "orchestrator must dispatch on chain_family for Aptos");
-  assert.match(prompt, /chain_family.*sui|sui.*chain_family/i, "orchestrator must dispatch on chain_family for Sui");
+test("orchestrator dispatches by chain_family to hunter-move for aptos and sui packs (Phase E)", () => {
+  // Phase D split smart_contract_move into smart_contract_aptos +
+  // smart_contract_sui packs (one verifier runner per pack), both still
+  // routing to hunter-move-agent. Phase E renders both via pack catalogue.
+  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.spawn.chain_family, "aptos");
+  assert.equal(CAPABILITY_PACKS.smart_contract_aptos.hunter_agent, "hunter-move-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_sui.spawn.chain_family, "sui");
+  assert.equal(CAPABILITY_PACKS.smart_contract_sui.hunter_agent, "hunter-move-agent");
+
+  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
+  assert.match(rendered, /capability_pack: "smart_contract_aptos".*hunter-move-agent/, "rendered orchestrator must list smart_contract_aptos -> hunter-move-agent");
+  assert.match(rendered, /capability_pack: "smart_contract_sui".*hunter-move-agent/, "rendered orchestrator must list smart_contract_sui -> hunter-move-agent");
 });
 
 test("chain-builder prompt enumerates Aptos + Sui patterns and enforces aptos/sui-cite-finding", () => {
@@ -1670,12 +1785,15 @@ test("hunter-cosmwasm prompt encodes chain_family=cosmwasm branching, sc_evidenc
   assert.match(prompt, /bech32/i, "hunter-cosmwasm must reference bech32 address format");
 });
 
-test("orchestrator dispatches by chain_family to hunter-substrate and hunter-cosmwasm (Phase 6c)", () => {
-  const prompt = readFile("prompts/roles/orchestrator.md");
-  assert.match(prompt, /SPAWN_HUNTER_SUBSTRATE_AGENT/, "orchestrator must reference Substrate hunter spawn");
-  assert.match(prompt, /SPAWN_HUNTER_COSMWASM_AGENT/, "orchestrator must reference CosmWasm hunter spawn");
-  assert.match(prompt, /chain_family.*"substrate"/, "orchestrator must dispatch on chain_family for substrate");
-  assert.match(prompt, /chain_family.*"cosmwasm"/, "orchestrator must dispatch on chain_family for cosmwasm");
+test("orchestrator dispatches by chain_family to hunter-substrate and hunter-cosmwasm (Phase E pack-driven)", () => {
+  assert.equal(CAPABILITY_PACKS.smart_contract_substrate.spawn.chain_family, "substrate");
+  assert.equal(CAPABILITY_PACKS.smart_contract_substrate.hunter_agent, "hunter-substrate-agent");
+  assert.equal(CAPABILITY_PACKS.smart_contract_cosmwasm.spawn.chain_family, "cosmwasm");
+  assert.equal(CAPABILITY_PACKS.smart_contract_cosmwasm.hunter_agent, "hunter-cosmwasm-agent");
+
+  const rendered = readFile(".claude/skills/bob-hunt/SKILL.md");
+  assert.match(rendered, /capability_pack: "smart_contract_substrate".*hunter-substrate-agent/, "rendered orchestrator must list smart_contract_substrate -> hunter-substrate-agent");
+  assert.match(rendered, /capability_pack: "smart_contract_cosmwasm".*hunter-cosmwasm-agent/, "rendered orchestrator must list smart_contract_cosmwasm -> hunter-cosmwasm-agent");
 });
 
 test("Substrate and CosmWasm packs declare disambiguation reads (Phase D)", () => {

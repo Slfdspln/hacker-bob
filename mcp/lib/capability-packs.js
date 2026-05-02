@@ -8,11 +8,16 @@
 //   completion_gate — wave-handoff completion rule the merge layer enforces
 //   verifier        — pack-keyed PoC replay for brutalist/balanced/final verifier
 //   evidence        — pack-keyed runner for evidence-agent's pre-grade re-runs
+//   spawn           — pack-keyed spawn template strings consumed by both the
+//                     Claude and Codex orchestrator-skill renderers (Phase E)
 //
 // Adding a new chain pack must be a single-file edit here plus a new prompt
 // body. Phase D consumers (verifier, evidence) look up the pack by
 // finding.capability_pack and dispatch on the verifier/evidence blocks
-// instead of branching on chain_family in their prompts.
+// instead of branching on chain_family in their prompts. Phase E extended the
+// same dispatch to orchestrator hunter spawn templates: every per-chain
+// SPAWN_HUNTER_*_AGENT template body is composed from spawn fields, so adding
+// a 7th pack auto-generates its catalogue entry without touching any renderer.
 
 const WEB_CAPABILITY_PACK = Object.freeze({
   id: "web",
@@ -32,6 +37,12 @@ const WEB_CAPABILITY_PACK = Object.freeze({
   evidence: Object.freeze({
     runner: "bounty_http_scan",
     sample_type: "http_replay",
+  }),
+  // Web pack uses a structurally distinct spawn body (web context fields,
+  // auth profiles, geofence rule). The renderer recognises profile="web"
+  // and emits the legacy SPAWN_HUNTER_AGENT body unchanged.
+  spawn: Object.freeze({
+    profile: "web",
   }),
 });
 
@@ -58,6 +69,15 @@ const SMART_CONTRACT_EVM_CAPABILITY_PACK = Object.freeze({
     runner: "bounty_foundry_run",
     sample_type: "evm_foundry_run",
   }),
+  spawn: Object.freeze({
+    profile: "smart_contract",
+    chain_family: "evm",
+    hunter_name_prefix: "hunter-evm",
+    chain_id_description: "the EVM chain id (e.g., 1, 137, 10, 42161)",
+    workflow_summary: "bounty_evm_fetch_source -> read sources via Read -> bounty_evm_role_table to map the trust boundary -> scaffold a Foundry test under harness_path/test/ via Write -> bounty_foundry_run with chain_id and pinned fork_block -> record bypass_attempts[] entries citing the actual harness path + test name in attempt_summary.",
+    cli_dependency: "forge",
+    blocked_harness_kind_options: "foundry_fork or rpc_endpoint",
+  }),
 });
 
 const SMART_CONTRACT_SVM_CAPABILITY_PACK = Object.freeze({
@@ -82,6 +102,15 @@ const SMART_CONTRACT_SVM_CAPABILITY_PACK = Object.freeze({
   evidence: Object.freeze({
     runner: "bounty_anchor_run",
     sample_type: "svm_anchor_run",
+  }),
+  spawn: Object.freeze({
+    profile: "smart_contract",
+    chain_family: "svm",
+    hunter_name_prefix: "hunter-svm",
+    chain_id_description: "the Solana cluster",
+    workflow_summary: "bounty_svm_fetch_program (confirm upgrade authority) -> bounty_svm_fetch_account (read multisig + state accounts) -> scaffold an Anchor test under harness_path/tests/ via Write -> bounty_anchor_run with cluster and optional pinned fork_slot -> record bypass_attempts[] entries citing the actual harness path + test description in attempt_summary.",
+    cli_dependency: "anchor",
+    blocked_harness_kind_options: "anchor_fork",
   }),
 });
 
@@ -115,6 +144,15 @@ const SMART_CONTRACT_APTOS_CAPABILITY_PACK = Object.freeze({
     runner: "bounty_aptos_run",
     sample_type: "aptos_move_test",
   }),
+  spawn: Object.freeze({
+    profile: "smart_contract",
+    chain_family: "aptos",
+    hunter_name_prefix: "hunter-aptos",
+    chain_id_description: "the network name (mainnet/testnet/devnet)",
+    workflow_summary: "bounty_aptos_fetch_module (enumerate exposed_functions, structs, friends) -> bounty_aptos_fetch_resource (read capability tokens, ownership records, treasury balances) -> scaffold an `aptos move test` harness under harness_path/sources/ via Write -> bounty_aptos_run with network and optional pinned fork_version -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    cli_dependency: "aptos",
+    blocked_harness_kind_options: "aptos_fork",
+  }),
 });
 
 const SMART_CONTRACT_SUI_CAPABILITY_PACK = Object.freeze({
@@ -137,6 +175,15 @@ const SMART_CONTRACT_SUI_CAPABILITY_PACK = Object.freeze({
   evidence: Object.freeze({
     runner: "bounty_sui_run",
     sample_type: "sui_move_test",
+  }),
+  spawn: Object.freeze({
+    profile: "smart_contract",
+    chain_family: "sui",
+    hunter_name_prefix: "hunter-sui",
+    chain_id_description: "the network name (mainnet/testnet/devnet/localnet)",
+    workflow_summary: "bounty_sui_fetch_package (enumerate entry functions and friend relationships) -> bounty_sui_fetch_object (inspect Owner=Immutable/Shared/AddressOwner/ObjectOwner, Move type, capability fields) -> scaffold a `sui move test` harness under harness_path/sources/ via Write -> bounty_sui_run with network and optional pinned fork_checkpoint -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    cli_dependency: "sui",
+    blocked_harness_kind_options: "sui_fork",
   }),
 });
 
@@ -165,6 +212,15 @@ const SMART_CONTRACT_SUBSTRATE_CAPABILITY_PACK = Object.freeze({
     runner: "bounty_substrate_run",
     sample_type: "substrate_ink_test",
   }),
+  spawn: Object.freeze({
+    profile: "smart_contract",
+    chain_family: "substrate",
+    hunter_name_prefix: "hunter-substrate",
+    chain_id_description: "the network name (polkadot/kusama/astar/shiden/rococo/westend/localnet)",
+    workflow_summary: "bounty_substrate_fetch_runtime (confirm chain identity + spec_version) -> bounty_substrate_fetch_storage (read pallet_contracts.ContractInfoOf for code_hash and admin) -> scaffold an ink! `cargo test` harness under harness_path/ via Write (uses #[ink::test] for unit or #[ink_e2e::test] for E2E) -> bounty_substrate_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    cli_dependency: "cargo or substrate-contracts-node",
+    blocked_harness_kind_options: "substrate_fork",
+  }),
 });
 
 const SMART_CONTRACT_COSMWASM_CAPABILITY_PACK = Object.freeze({
@@ -190,6 +246,15 @@ const SMART_CONTRACT_COSMWASM_CAPABILITY_PACK = Object.freeze({
   evidence: Object.freeze({
     runner: "bounty_cosmwasm_run",
     sample_type: "cosmwasm_cw_multi_test",
+  }),
+  spawn: Object.freeze({
+    profile: "smart_contract",
+    chain_family: "cosmwasm",
+    hunter_name_prefix: "hunter-cosmwasm",
+    chain_id_description: "the network name (osmosis/juno/neutron/archway/sei/stargaze/terra/kava/localnet)",
+    workflow_summary: "bounty_cosmwasm_fetch_contract (confirm contract exists, capture code_id + admin) -> bounty_cosmwasm_smart_query (inspect public Config / Owner / Balance entrypoints) -> scaffold a cw-multi-test integration test under harness_path/tests/ via Write -> bounty_cosmwasm_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary.",
+    cli_dependency: "cargo",
+    blocked_harness_kind_options: "cosmwasm_fork",
   }),
 });
 
@@ -250,6 +315,15 @@ function hunterAgentNamesForCapabilityPacks() {
       .map((pack) => pack && pack.hunter_agent)
       .filter((value) => typeof value === "string" && value.trim()),
   ));
+}
+
+// Phase E: spawn-template iteration helpers consumed by Claude/Codex
+// orchestrator-skill renderers. Returning frozen arrays keeps callers from
+// accidentally mutating the registry.
+function smartContractCapabilityPacks() {
+  return Object.values(CAPABILITY_PACKS).filter(
+    (pack) => pack && pack.spawn && pack.spawn.profile === "smart_contract",
+  );
 }
 
 function defaultWebRouteMetadata() {
@@ -402,4 +476,5 @@ module.exports = {
   hunterAgentNamesForCapabilityPacks,
   normalizeAssignmentRouteMetadata,
   normalizeSurfaceType,
+  smartContractCapabilityPacks,
 };

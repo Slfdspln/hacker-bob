@@ -10,6 +10,7 @@ const {
 } = require("../../adapters/codex/role-specs.js");
 const {
   substituteCapabilityPackVerifierTable,
+  substituteCodexHunterPackCatalogue,
 } = require("../../mcp/lib/capability-packs-rendering.js");
 
 const DEFAULT_ROOT = path.join(__dirname, "..", "..");
@@ -172,45 +173,13 @@ function codexLaunchTemplates() {
       "Wait with `wait_agent`, read `bounty_read_evidence_packs.data`, then `close_agent`.",
       "```",
     ].join("\n"),
-    // Chain-specific hunter spawn references. The orchestrator embeds these
-    // as type catalogue entries; the routed `assignment.hunter_agent` from
-    // the MCP capability router is the runtime dispatch — Codex picks the
-    // matching worker contract from the role appendix in this skill.
-    "{{SPAWN_HUNTER_EVM_AGENT}}": [
-      "```text",
-      `For smart_contract_evm assignments: spawn Codex worker for ${workerLabel("hunter-evm")}.`,
-      "- agent_type: \"worker\"",
-      "- message: include the standard SC run header (Domain, Wave, Agent, Surface, Capability pack, Brief profile, Hunter agent, Handoff token, Checkpoint mode) plus the full `hunter-evm` contract from Codex Worker Role Contracts.",
-      "```",
-    ].join("\n"),
-    "{{SPAWN_HUNTER_SVM_AGENT}}": [
-      "```text",
-      `For smart_contract_svm assignments: spawn Codex worker for ${workerLabel("hunter-svm")}.`,
-      "- agent_type: \"worker\"",
-      "- message: include the standard SC run header plus the full `hunter-svm` contract from Codex Worker Role Contracts.",
-      "```",
-    ].join("\n"),
-    "{{SPAWN_HUNTER_MOVE_AGENT}}": [
-      "```text",
-      `For smart_contract_aptos and smart_contract_sui assignments: spawn Codex worker for ${workerLabel("hunter-move")}.`,
-      "- agent_type: \"worker\"",
-      "- message: include the standard SC run header plus the full `hunter-move` contract from Codex Worker Role Contracts. The hunter dispatches between bounty_aptos_* and bounty_sui_* internally based on surface.chain_family.",
-      "```",
-    ].join("\n"),
-    "{{SPAWN_HUNTER_SUBSTRATE_AGENT}}": [
-      "```text",
-      `For smart_contract_substrate assignments: spawn Codex worker for ${workerLabel("hunter-substrate")}.`,
-      "- agent_type: \"worker\"",
-      "- message: include the standard SC run header plus the full `hunter-substrate` contract from Codex Worker Role Contracts.",
-      "```",
-    ].join("\n"),
-    "{{SPAWN_HUNTER_COSMWASM_AGENT}}": [
-      "```text",
-      `For smart_contract_cosmwasm assignments: spawn Codex worker for ${workerLabel("hunter-cosmwasm")}.`,
-      "- agent_type: \"worker\"",
-      "- message: include the standard SC run header plus the full `hunter-cosmwasm` contract from Codex Worker Role Contracts.",
-      "```",
-    ].join("\n"),
+    // Phase E: smart-contract spawn templates render from the capability
+    // pack manifest. The Codex renderer fills the {{HUNTER_PACK_CATALOGUE}}
+    // placeholder via substituteCodexHunterPackCatalogue, which iterates
+    // smartContractCapabilityPacks() and emits one entry per pack. Adding a
+    // 7th chain pack auto-extends the catalogue here without editing this
+    // file. Per-pack worker contracts still live in the role-contract
+    // appendix below — that loop is also driven by the registry.
   });
 }
 
@@ -283,10 +252,30 @@ function codexRoleContractAppendix({ root = DEFAULT_ROOT } = {}) {
   return sections.join("\n");
 }
 
+function codexWorkerLabelForPack(pack) {
+  // pack.hunter_agent is the Bob agent name (e.g., "hunter-evm-agent").
+  // The catalogue line surrounds this with adjacent prose ("-> Codex worker
+  // ${label}"), so the label itself is just the bob_role+agent_type pair.
+  // Aptos and Sui packs both resolve to "hunter-move" because they share
+  // the same Move hunter contract; the renderer picks the role id by
+  // stripping the conventional "-agent" suffix from pack.hunter_agent.
+  const roleId = pack.hunter_agent.replace(/-agent$/, "");
+  // CODEX_WORKER_CONTRACT_ROLE_IDS holds the canonical role list. If a pack
+  // is added without a matching codex role spec, fail loudly here rather
+  // than silently rendering "undefined -> Codex undefined".
+  if (!CODEX_WORKER_CONTRACT_ROLE_IDS.includes(roleId)) {
+    throw new Error(
+      `pack ${pack.id} hunter_agent ${pack.hunter_agent} maps to roleId ${roleId} which is not in CODEX_WORKER_CONTRACT_ROLE_IDS; add the role spec before regenerating prompts`,
+    );
+  }
+  return workerLabel(roleId);
+}
+
 function renderCodexPromptBody(roleId, body, options = {}) {
   let document = applyCodexHostText(body);
   document = replaceLaunchTemplates(document);
   document = substituteCapabilityPackVerifierTable(document);
+  document = substituteCodexHunterPackCatalogue(document, codexWorkerLabelForPack);
   if (roleId === "orchestrator") {
     document = document.replace("## Hard Rules\n", `${codexOrchestratorPreamble()}## Hard Rules\n`);
     document += `${codexRoleContractAppendix(options)}\n`;

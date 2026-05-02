@@ -139,32 +139,22 @@ For each assignment, use Codex spawn_agent for the hunter family chosen by the M
 Wait for worker completion notifications or `wait_agent` results. Do not merge in the launch turn.
 ```
 
-Chain-specific references (the router pins `assignment.brief_profile` and `surface.chain_family` per pack — `hunter-evm-agent`/`smart_contract_evm`/`chain_family: "evm"`, `hunter-svm-agent`/`smart_contract_svm`/`chain_family: "svm"`, `hunter-move-agent`/`smart_contract_move` covering `chain_family: "aptos"` and `chain_family: "sui"` (the role dispatches `bounty_aptos_*` vs `bounty_sui_*` internally), `hunter-substrate-agent`/`smart_contract_substrate`/`chain_family: "substrate"`, `hunter-cosmwasm-agent`/`smart_contract_cosmwasm`/`chain_family: "cosmwasm"`):
+Smart-contract spawn dispatch:
+- If `assignment.brief_profile === "web"` -> use the generic hunter spawn template above; do not use the SC template below.
+- Otherwise -> use the canonical smart-contract template below and look up the matching catalogue line by `assignment.capability_pack`.
+
+Pack metadata is the source of truth in `mcp/lib/capability-packs.js`; adding a chain pack auto-extends the catalogue at next prompt regeneration.
 ```text
-For smart_contract_evm assignments: spawn Codex worker for hunter-evm-agent -> Codex worker.
-- agent_type: "worker"
-- message: include the standard SC run header (Domain, Wave, Agent, Surface, Capability pack, Brief profile, Hunter agent, Handoff token, Checkpoint mode) plus the full `hunter-evm` contract from Codex Worker Role Contracts.
+For each smart-contract assignment, use Codex spawn_agent with `agent_type: "worker"` and a message that: (1) includes the run header (Domain, Wave, Agent, Surface, Capability pack, Brief profile, Hunter agent, Handoff token, Checkpoint mode), (2) inlines the workflow summary, CLI dependency, and blocked_harness_runs[] kind copied verbatim from the catalogue line for [assignment.capability_pack], and (3) includes the worker contract for [assignment.hunter_agent] from Codex Worker Role Contracts.
 ```
-```text
-For smart_contract_svm assignments: spawn Codex worker for hunter-svm-agent -> Codex worker.
-- agent_type: "worker"
-- message: include the standard SC run header plus the full `hunter-svm` contract from Codex Worker Role Contracts.
-```
-```text
-For smart_contract_aptos and smart_contract_sui assignments: spawn Codex worker for hunter-move-agent -> Codex worker.
-- agent_type: "worker"
-- message: include the standard SC run header plus the full `hunter-move` contract from Codex Worker Role Contracts. The hunter dispatches between bounty_aptos_* and bounty_sui_* internally based on surface.chain_family.
-```
-```text
-For smart_contract_substrate assignments: spawn Codex worker for hunter-substrate-agent -> Codex worker.
-- agent_type: "worker"
-- message: include the standard SC run header plus the full `hunter-substrate` contract from Codex Worker Role Contracts.
-```
-```text
-For smart_contract_cosmwasm assignments: spawn Codex worker for hunter-cosmwasm-agent -> Codex worker.
-- agent_type: "worker"
-- message: include the standard SC run header plus the full `hunter-cosmwasm` contract from Codex Worker Role Contracts.
-```
+
+Pack catalogue (lookup by `assignment.capability_pack`):
+- `capability_pack: "smart_contract_evm"` (chain_family `evm`) -> hunter-evm-agent -> Codex worker. chain_id: the EVM chain id (e.g., 1, 137, 10, 42161). Workflow: bounty_evm_fetch_source -> read sources via Read -> bounty_evm_role_table to map the trust boundary -> scaffold a Foundry test under harness_path/test/ via Write -> bounty_foundry_run with chain_id and pinned fork_block -> record bypass_attempts[] entries citing the actual harness path + test name in attempt_summary. CLI dependency: forge; blocked_harness_runs[] kind: foundry_fork or rpc_endpoint.
+- `capability_pack: "smart_contract_svm"` (chain_family `svm`) -> hunter-svm-agent -> Codex worker. chain_id: the Solana cluster. Workflow: bounty_svm_fetch_program (confirm upgrade authority) -> bounty_svm_fetch_account (read multisig + state accounts) -> scaffold an Anchor test under harness_path/tests/ via Write -> bounty_anchor_run with cluster and optional pinned fork_slot -> record bypass_attempts[] entries citing the actual harness path + test description in attempt_summary. CLI dependency: anchor; blocked_harness_runs[] kind: anchor_fork.
+- `capability_pack: "smart_contract_aptos"` (chain_family `aptos`) -> hunter-move-agent -> Codex worker. chain_id: the network name (mainnet/testnet/devnet). Workflow: bounty_aptos_fetch_module (enumerate exposed_functions, structs, friends) -> bounty_aptos_fetch_resource (read capability tokens, ownership records, treasury balances) -> scaffold an `aptos move test` harness under harness_path/sources/ via Write -> bounty_aptos_run with network and optional pinned fork_version -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. CLI dependency: aptos; blocked_harness_runs[] kind: aptos_fork.
+- `capability_pack: "smart_contract_sui"` (chain_family `sui`) -> hunter-move-agent -> Codex worker. chain_id: the network name (mainnet/testnet/devnet/localnet). Workflow: bounty_sui_fetch_package (enumerate entry functions and friend relationships) -> bounty_sui_fetch_object (inspect Owner=Immutable/Shared/AddressOwner/ObjectOwner, Move type, capability fields) -> scaffold a `sui move test` harness under harness_path/sources/ via Write -> bounty_sui_run with network and optional pinned fork_checkpoint -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. CLI dependency: sui; blocked_harness_runs[] kind: sui_fork.
+- `capability_pack: "smart_contract_substrate"` (chain_family `substrate`) -> hunter-substrate-agent -> Codex worker. chain_id: the network name (polkadot/kusama/astar/shiden/rococo/westend/localnet). Workflow: bounty_substrate_fetch_runtime (confirm chain identity + spec_version) -> bounty_substrate_fetch_storage (read pallet_contracts.ContractInfoOf for code_hash and admin) -> scaffold an ink! `cargo test` harness under harness_path/ via Write (uses #[ink::test] for unit or #[ink_e2e::test] for E2E) -> bounty_substrate_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. CLI dependency: cargo or substrate-contracts-node; blocked_harness_runs[] kind: substrate_fork.
+- `capability_pack: "smart_contract_cosmwasm"` (chain_family `cosmwasm`) -> hunter-cosmwasm-agent -> Codex worker. chain_id: the network name (osmosis/juno/neutron/archway/sei/stargaze/terra/kava/localnet). Workflow: bounty_cosmwasm_fetch_contract (confirm contract exists, capture code_id + admin) -> bounty_cosmwasm_smart_query (inspect public Config / Owner / Balance entrypoints) -> scaffold a cw-multi-test integration test under harness_path/tests/ via Write -> bounty_cosmwasm_run with network and optional pinned fork_block -> record bypass_attempts[] citing the actual harness path + test name in attempt_summary. CLI dependency: cargo; blocked_harness_runs[] kind: cosmwasm_fork.
 
 Geofence triggers for the orchestrator are repeated first-party timeouts, repeated first-party `INTERNAL_ERROR` or connection reset results, multiple tripped target-owned hosts in `circuit_breaker_summary`, `network_unreachable_target` in audit or analytics, or audit summaries showing `default` egress cannot reach high-value first-party surfaces. Treat these as reachability warnings. Do not rotate silently; summarize the blocked context and ask the operator to resume with `$bob-hunt --egress <profile> resume <domain>`.
 

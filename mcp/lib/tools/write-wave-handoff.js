@@ -57,7 +57,20 @@ module.exports = Object.freeze({
           "properties": {
             "kind": {
               "type": "string",
-              "enum": ["foundry_fork", "rpc_endpoint", "fuzzer", "symbolic_solver", "mock_dependency", "external_api", "other"]
+              "enum": [
+                "foundry_fork",
+                "anchor_fork",
+                "aptos_fork",
+                "sui_fork",
+                "substrate_fork",
+                "cosmwasm_fork",
+                "rpc_endpoint",
+                "fuzzer",
+                "symbolic_solver",
+                "mock_dependency",
+                "external_api",
+                "other"
+              ]
             },
             "harness": { "type": "string", "minLength": 1, "maxLength": 120 },
             "reason": { "type": "string", "minLength": 1, "maxLength": 240 },
