@@ -14,6 +14,9 @@ const {
   AGENT_TOOL_SPECS,
   toolsForSpec,
 } = require("../scripts/generate-agent-tools.js");
+const {
+  hunterAgentNamesForCapabilityPacks,
+} = require("../mcp/lib/capability-packs.js");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -841,6 +844,16 @@ test("installer and dev-sync copy and configure session guards", () => {
   assert.match(JSON.stringify(defaultClaudeSettings().hooks.SessionStart), /bob-check-update\.js/);
   assert.match(JSON.stringify(defaultClaudeSettings()), /\$\{CLAUDE_PROJECT_DIR:-\$PWD\}/);
   assert.doesNotMatch(JSON.stringify(defaultClaudeSettings()), /\$CLAUDE_PROJECT_DIR(?!:-)/);
+});
+
+test("SubagentStop hooks cover every routed capability-pack hunter agent", () => {
+  const expectedHunters = hunterAgentNamesForCapabilityPacks().sort();
+  const configuredHunters = (defaultClaudeSettings().hooks.SubagentStop || [])
+    .filter((entry) => (entry.hooks || []).some((hook) => /hunter-subagent-stop\.js/.test(hook.command)))
+    .map((entry) => entry.matcher)
+    .sort();
+
+  assert.deepEqual(configuredHunters, expectedHunters);
 });
 
 test("verifier and grader examples use F-N finding IDs", () => {

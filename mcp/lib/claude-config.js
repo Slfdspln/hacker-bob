@@ -5,6 +5,9 @@ const {
   TOOLS,
   toolNamesForRoleBundle,
 } = require("./tool-registry.js");
+const {
+  hunterAgentNamesForCapabilityPacks,
+} = require("./capability-packs.js");
 
 const BASE_PERMISSIONS = Object.freeze([
   "Bash(mkdir *)",
@@ -122,9 +125,9 @@ function defaultPreToolUseHooks() {
 }
 
 function defaultSubagentStopHooks() {
-  return [
+  return hunterAgentNamesForCapabilityPacks().map((hunterAgent) => (
     {
-      matcher: "hunter-agent",
+      matcher: hunterAgent,
       hooks: [
         {
           type: "command",
@@ -132,8 +135,8 @@ function defaultSubagentStopHooks() {
           timeout: 10,
         },
       ],
-    },
-  ];
+    }
+  ));
 }
 
 function defaultSessionStartHooks() {

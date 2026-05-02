@@ -45,6 +45,14 @@ function getCapabilityPack(packId) {
   return CAPABILITY_PACKS[packId] || null;
 }
 
+function hunterAgentNamesForCapabilityPacks() {
+  return Array.from(new Set(
+    Object.values(CAPABILITY_PACKS)
+      .map((pack) => pack && pack.hunter_agent)
+      .filter((value) => typeof value === "string" && value.trim()),
+  ));
+}
+
 function defaultWebRouteMetadata() {
   return {
     capability_pack: WEB_CAPABILITY_PACK.id,
@@ -122,6 +130,7 @@ module.exports = {
   classifySurfaceCapability,
   defaultWebRouteMetadata,
   getCapabilityPack,
+  hunterAgentNamesForCapabilityPacks,
   normalizeAssignmentRouteMetadata,
   normalizeSurfaceType,
 };
