@@ -40,6 +40,9 @@ const {
 } = require("./coverage.js");
 const { readAttackSurfaceStrict } = require("./attack-surface.js");
 const {
+  routeSurfacesInternal,
+} = require("./surface-router.js");
+const {
   isAssignableSurfaceLead,
   promoteSurfaceLeadsInternal,
   readSurfaceLeadsDocument,
@@ -723,11 +726,26 @@ function startWave(args) {
     // immutable, MCP-owned assignment file. This makes the smart_contract
     // completion gate tamper-resistant — hunters cannot disable enforcement
     // by mutating attack_surface.json mid-wave.
+    const routedSurfaces = routeSurfacesInternal(domain, { attackSurfaceInfo: attackSurface });
+    const routeBySurfaceId = new Map(
+      routedSurfaces.document.routes.map((route) => [route.surface_id, route]),
+    );
+    for (const assignment of assignments) {
+      if (!routeBySurfaceId.has(assignment.surface_id)) {
+        throw new ToolError(ERROR_CODES.INVALID_ARGUMENTS, `Missing route for surface_id in assignments: ${assignment.surface_id}`);
+      }
+    }
+
+
     const persistedAssignments = assignments.map((assignment) => {
       const token = generateHandoffToken();
+      const route = routeBySurfaceId.get(assignment.surface_id);
       return {
         ...assignment,
         surface_type: surfaceTypeById.get(assignment.surface_id) || null,
+        capability_pack: route.capability_pack,
+        hunter_agent: route.hunter_agent,
+        brief_profile: route.brief_profile,
         handoff_token_sha256: sha256Hex(token),
         handoff_token: token,
       };
@@ -776,6 +794,9 @@ function startWave(args) {
       assignments: persistedAssignments.map((assignment) => ({
         agent: assignment.agent,
         surface_id: assignment.surface_id,
+        capability_pack: assignment.capability_pack,
+        hunter_agent: assignment.hunter_agent,
+        brief_profile: assignment.brief_profile,
         handoff_token: assignment.handoff_token,
       })),
       assignments_path: assignmentsPath,

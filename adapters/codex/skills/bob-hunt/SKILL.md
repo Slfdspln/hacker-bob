@@ -123,15 +123,15 @@ Wave policy:
 Before spawning a wave:
 1. If `state.pending_wave` is non-null, stop and require `$bob-hunt resume [domain]`.
 2. Compute assignments from requeue plus wave policy.
-3. Call `bounty_start_wave({ target_domain, wave_number: N, assignments })`; assignment agent IDs must be short `aN`.
-4. Spawn hunters only after `bounty_start_wave` succeeds. Use each returned `result.data.assignments[].handoff_token` only in that hunter's spawn prompt.
+3. Call `bounty_start_wave({ target_domain, wave_number: N, assignments })`; assignment agent IDs must be short `aN`, and MCP returns each assignment's capability routing.
+4. Spawn hunters only after `bounty_start_wave` succeeds. Use each returned `result.data.assignments[].hunter_agent` as the subagent type and that assignment's `handoff_token` only in its spawn prompt. The MCP capability router has already chosen the correct hunter family per surface; do not branch by `chain_family` in the orchestrator.
 
-Hunter spawn prompt must be compact and include:
+Generic hunter spawn template (uses the routed `assignment.hunter_agent`; the brief itself carries chain-specific context):
 ```text
-For each assignment, use Codex spawn_agent for hunter-agent -> Codex worker.
+For each assignment, use Codex spawn_agent for the hunter family chosen by the MCP capability router (`assignment.hunter_agent` from bounty_start_wave.data.assignments[] — one of hunter-agent, hunter-evm-agent, hunter-svm-agent, hunter-move-agent, hunter-substrate-agent, or hunter-cosmwasm-agent).
 - agent_type: "worker"
-- message: include the compact run header below plus the full `hunter` contract from Codex Worker Role Contracts.
-- Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].
+- message: include the compact run header below plus the full contract for `assignment.hunter_agent` from Codex Worker Role Contracts.
+- Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Capability pack: [assignment.capability_pack]; Brief profile: [assignment.brief_profile]; Hunter agent: [assignment.hunter_agent]; Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].
 - First action inside the worker: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.
 - Track the local mapping `host_agent_id -> w[wave]/a[agent]/surface_id`; Bob's `aN` value is authoritative even if Codex displays a different nickname.
 - Respect Codex capacity. Launch only as many workers as the host accepts, keep the rest queued, and start queued assignments only after completed agents are closed.
@@ -139,21 +139,11 @@ For each assignment, use Codex spawn_agent for hunter-agent -> Codex worker.
 Wait for worker completion notifications or `wait_agent` results. Do not merge in the launch turn.
 ```
 
-For smart-contract surfaces (`surface_type: "smart_contract"` in `attack_surface.json` and on the `bounty_start_wave` assignment), branch by `surface.chain_family`:
-
-When `chain_family: "evm"`, spawn the EVM hunter family:
+Chain-specific references (the router pins `assignment.brief_profile` and `surface.chain_family` per pack — `hunter-evm-agent`/`smart_contract_evm`/`chain_family: "evm"`, `hunter-svm-agent`/`smart_contract_svm`/`chain_family: "svm"`, `hunter-move-agent`/`smart_contract_move` covering `chain_family: "aptos"` and `chain_family: "sui"` (the role dispatches `bounty_aptos_*` vs `bounty_sui_*` internally), `hunter-substrate-agent`/`smart_contract_substrate`/`chain_family: "substrate"`, `hunter-cosmwasm-agent`/`smart_contract_cosmwasm`/`chain_family: "cosmwasm"`):
 {{SPAWN_HUNTER_EVM_AGENT}}
-
-When `chain_family: "svm"`, spawn the SVM hunter family:
 {{SPAWN_HUNTER_SVM_AGENT}}
-
-When `chain_family: "aptos"` or `chain_family: "sui"`, spawn the Move hunter family (one role handles both Aptos and Sui — the hunter dispatches by `surface.chain_family` internally to pick `bounty_aptos_*` vs `bounty_sui_*` tools):
 {{SPAWN_HUNTER_MOVE_AGENT}}
-
-When `chain_family: "substrate"`, spawn the Substrate / ink! hunter family:
 {{SPAWN_HUNTER_SUBSTRATE_AGENT}}
-
-When `chain_family: "cosmwasm"`, spawn the CosmWasm hunter family:
 {{SPAWN_HUNTER_COSMWASM_AGENT}}
 
 Geofence triggers for the orchestrator are repeated first-party timeouts, repeated first-party `INTERNAL_ERROR` or connection reset results, multiple tripped target-owned hosts in `circuit_breaker_summary`, `network_unreachable_target` in audit or analytics, or audit summaries showing `default` egress cannot reach high-value first-party surfaces. Treat these as reachability warnings. Do not rotate silently; summarize the blocked context and ask the operator to resume with `$bob-hunt --egress <profile> resume <domain>`.
@@ -782,6 +772,13 @@ BEGIN hunter CONTRACT
 You are a bug bounty hunter agent. Test one surface only.
 
 The orchestrator injects your wave/agent ID, target domain, capability pack, handoff token, egress profile, deep-mode flag, and internal-host blocking setting in the spawn prompt. On startup, call `bounty_read_hunter_brief({ target_domain, wave, agent, egress_profile, block_internal_hosts })` to get `run_context`, your assigned surface, exclusions, valid surface IDs, bypass table, coverage summary, traffic summary, audit/circuit-breaker summary, ranking reasons, intel hints, static scan hints, and curated `techniques` / `payload_hints` in one call.
+
+Post-report evidence mode is different. If the spawn prompt explicitly says `Mode: post-report evidence` or tells you to finish with `BOB_HUNTER_DONE {"mode":"evidence", ...}`, you are amplifying evidence for an already reported finding, not completing a wave assignment. In that mode:
+- Do not call `bounty_read_hunter_brief`; there is no wave assignment.
+- Do not call `bounty_record_finding`, `bounty_write_wave_handoff`, or mutate verification/grade/report artifacts.
+- You may use `bounty_http_scan` with `target_domain` to collect additional impact evidence requested by the operator, at a moderate request rate.
+- If the spawn prompt includes an egress profile, pass that exact `egress_profile` value on every `bounty_http_scan` call.
+- Finish with exactly one marker: `BOB_HUNTER_DONE {"target_domain":"[domain]","mode":"evidence","surface_id":"F-N or evidence topic","summary":"short evidence result"}`.
 
 Rules:
 - Call `bounty_read_hunter_brief` as your first action to load your assignment.

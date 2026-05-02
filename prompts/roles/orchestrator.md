@@ -98,27 +98,17 @@ Wave policy:
 Before spawning a wave:
 1. If `state.pending_wave` is non-null, stop and require `/bob-hunt resume [domain]`.
 2. Compute assignments from requeue plus wave policy.
-3. Call `bounty_start_wave({ target_domain, wave_number: N, assignments })`; assignment agent IDs must be short `aN`.
-4. Spawn hunters only after `bounty_start_wave` succeeds. Use each returned `result.data.assignments[].handoff_token` only in that hunter's spawn prompt.
+3. Call `bounty_start_wave({ target_domain, wave_number: N, assignments })`; assignment agent IDs must be short `aN`, and MCP returns each assignment's capability routing.
+4. Spawn hunters only after `bounty_start_wave` succeeds. Use each returned `result.data.assignments[].hunter_agent` as the subagent type and that assignment's `handoff_token` only in its spawn prompt. The MCP capability router has already chosen the correct hunter family per surface; do not branch by `chain_family` in the orchestrator.
 
-Hunter spawn prompt must be compact and include:
+Generic hunter spawn template (uses the routed `assignment.hunter_agent`; the brief itself carries chain-specific context):
 {{SPAWN_HUNTER_AGENT}}
 
-For smart-contract surfaces (`surface_type: "smart_contract"` in `attack_surface.json` and on the `bounty_start_wave` assignment), branch by `surface.chain_family`:
-
-When `chain_family: "evm"`, spawn the EVM hunter family:
+Chain-specific references (the router pins `assignment.brief_profile` and `surface.chain_family` per pack — `hunter-evm-agent`/`smart_contract_evm`/`chain_family: "evm"`, `hunter-svm-agent`/`smart_contract_svm`/`chain_family: "svm"`, `hunter-move-agent`/`smart_contract_move` covering `chain_family: "aptos"` and `chain_family: "sui"` (the role dispatches `bounty_aptos_*` vs `bounty_sui_*` internally), `hunter-substrate-agent`/`smart_contract_substrate`/`chain_family: "substrate"`, `hunter-cosmwasm-agent`/`smart_contract_cosmwasm`/`chain_family: "cosmwasm"`):
 {{SPAWN_HUNTER_EVM_AGENT}}
-
-When `chain_family: "svm"`, spawn the SVM hunter family:
 {{SPAWN_HUNTER_SVM_AGENT}}
-
-When `chain_family: "aptos"` or `chain_family: "sui"`, spawn the Move hunter family (one role handles both Aptos and Sui — the hunter dispatches by `surface.chain_family` internally to pick `bounty_aptos_*` vs `bounty_sui_*` tools):
 {{SPAWN_HUNTER_MOVE_AGENT}}
-
-When `chain_family: "substrate"`, spawn the Substrate / ink! hunter family:
 {{SPAWN_HUNTER_SUBSTRATE_AGENT}}
-
-When `chain_family: "cosmwasm"`, spawn the CosmWasm hunter family:
 {{SPAWN_HUNTER_COSMWASM_AGENT}}
 
 Geofence triggers for the orchestrator are repeated first-party timeouts, repeated first-party `INTERNAL_ERROR` or connection reset results, multiple tripped target-owned hosts in `circuit_breaker_summary`, `network_unreachable_target` in audit or analytics, or audit summaries showing `default` egress cannot reach high-value first-party surfaces. Treat these as reachability warnings. Do not rotate silently; summarize the blocked context and ask the operator to resume with `/bob-hunt --egress <profile> resume <domain>`.

@@ -57,7 +57,7 @@ const ROLE_DEFINITIONS = Object.freeze({
   hunter: Object.freeze({
     id: "hunter",
     prompt_body: path.join(ROLE_PROMPT_DIR, "hunter.md"),
-    mcp_role_bundles: Object.freeze(["hunter"]),
+    mcp_role_bundles: Object.freeze(["hunter-web"]),
   }),
   "hunter-evm": Object.freeze({
     id: "hunter-evm",

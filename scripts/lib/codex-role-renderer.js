@@ -102,10 +102,10 @@ function codexLaunchTemplates() {
     ].join("\n"),
     "{{SPAWN_HUNTER_AGENT}}": [
       "```text",
-      `For each assignment, use Codex spawn_agent for ${workerLabel("hunter")}.`,
+      "For each assignment, use Codex spawn_agent for the hunter family chosen by the MCP capability router (`assignment.hunter_agent` from bounty_start_wave.data.assignments[] — one of hunter-agent, hunter-evm-agent, hunter-svm-agent, hunter-move-agent, hunter-substrate-agent, or hunter-cosmwasm-agent).",
       "- agent_type: \"worker\"",
-      "- message: include the compact run header below plus the full `hunter` contract from Codex Worker Role Contracts.",
-      "- Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].",
+      "- message: include the compact run header below plus the full contract for `assignment.hunter_agent` from Codex Worker Role Contracts.",
+      "- Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Capability pack: [assignment.capability_pack]; Brief profile: [assignment.brief_profile]; Hunter agent: [assignment.hunter_agent]; Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].",
       "- First action inside the worker: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]' }) and use .data.",
       "- Track the local mapping `host_agent_id -> w[wave]/a[agent]/surface_id`; Bob's `aN` value is authoritative even if Codex displays a different nickname.",
       "- Respect Codex capacity. Launch only as many workers as the host accepts, keep the rest queued, and start queued assignments only after completed agents are closed.",

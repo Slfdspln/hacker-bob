@@ -30,11 +30,12 @@ const CLAUDE_LAUNCH_TEMPLATES = Object.freeze({
   ].join("\n"),
   "{{SPAWN_HUNTER_AGENT}}": [
     "```",
-    "Agent(subagent_type: \"hunter-agent\", name: \"hunter-w[wave]-a[agent]\", run_in_background: true, prompt: \"",
+    "Agent(subagent_type: \"[assignment.hunter_agent]\", name: \"hunter-w[wave]-a[agent]\", run_in_background: true, prompt: \"",
     "Domain: [domain]",
     "Wave: w[wave]",
     "Agent: a[agent]",
     "Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]",
+    "Capability pack: [assignment.capability_pack]. Brief profile: [assignment.brief_profile]. Hunter agent: [assignment.hunter_agent].",
     "First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: false }) and use .data, including run_context.",
     "Use surface_type, bug_class_hints, high_value_flows, evidence, surface_limits, coverage_summary, traffic_summary, audit_summary, circuit_breaker_summary, ranking_summary, intel_hints, and static_scan_hints as prioritization inputs for this one assigned surface.",
     "Egress profile: [egress_profile]. Pass this exact value as egress_profile on every bounty_http_scan call.",

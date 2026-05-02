@@ -52,6 +52,9 @@ const {
   readResourceText,
   resourceCandidatePaths,
 } = require("./runtime-resources.js");
+const {
+  normalizeAssignmentRouteMetadata,
+} = require("./capability-packs.js");
 
 // Bypass table tech-to-file map used by hunter brief generation.
 const BYPASS_TABLE_MAP = {
@@ -445,6 +448,10 @@ function readHunterBrief(args) {
   if (!assignment) {
     throw new Error(`Agent ${agent} is not assigned in wave ${wave}`);
   }
+  // normalizeAssignmentRouteMetadata already validates brief_profile against
+  // the capability-packs registry; any registered profile (web today, plus
+  // smart_contract_* once SC packs are added) is accepted by hunter-brief.
+  const routeMetadata = normalizeAssignmentRouteMetadata(assignment);
 
   // 2. Load attack surface and find assigned surface
   const attackSurface = readAttackSurfaceStrict(domain);
@@ -476,6 +483,7 @@ function readHunterBrief(args) {
   const deadEndResult = filterExclusionsByHosts(state.dead_ends, surfaceObj.hosts);
   const wafResult = filterExclusionsByHosts(state.waf_blocked_endpoints, surfaceObj.hosts);
   const knowledge = resolveHunterKnowledge(surfaceObj);
+  const isSmartContractBrief = routeMetadata.brief_profile !== "web";
   const coverageSummary = buildCoverageSummaryForSurface(
     readCoverageRecordsFromJsonl(domain),
     assignment.surface_id,
@@ -498,6 +506,9 @@ function readHunterBrief(args) {
       auth_status: state.auth_status,
       egress_profile: egressProfile,
       block_internal_hosts: blockInternalHosts,
+      capability_pack: routeMetadata.capability_pack,
+      hunter_agent: routeMetadata.hunter_agent,
+      brief_profile: routeMetadata.brief_profile,
     },
     target_url: state.target_url,
     wave,
@@ -526,8 +537,12 @@ function readHunterBrief(args) {
     ranking_summary: surfaceObj.ranking || null,
     intel_hints: intelHints,
     static_scan_hints: staticScanHints,
-    bob_spec_status: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
-    rpc_pool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
+    ...(isSmartContractBrief
+      ? {
+        bob_spec_status: summarizeBobSpecForBrief(loadBobSpec(domain), assignment.surface_id),
+        rpc_pool: summarizeRpcPoolForBrief(surfaceObj.chain_family, surfaceObj.chain_id),
+      }
+      : {}),
     auth_profiles_hint: "Call `bounty_list_auth_profiles`; pass the chosen profile name as `auth_profile` to `bounty_http_scan`.",
   }, null, 2);
 }

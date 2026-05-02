@@ -6,6 +6,7 @@ allowed-tools:
   - Task
   - Read
   - mcp__bountyagent__bounty_start_wave
+  - mcp__bountyagent__bounty_route_surfaces
   - mcp__bountyagent__bounty_import_http_traffic
   - mcp__bountyagent__bounty_public_intel
   - mcp__bountyagent__bounty_list_findings
@@ -144,16 +145,17 @@ Wave policy:
 Before spawning a wave:
 1. If `state.pending_wave` is non-null, stop and require `/bob-hunt resume [domain]`.
 2. Compute assignments from requeue plus wave policy.
-3. Call `bounty_start_wave({ target_domain, wave_number: N, assignments })`; assignment agent IDs must be short `aN`.
-4. Spawn hunters only after `bounty_start_wave` succeeds. Use each returned `result.data.assignments[].handoff_token` only in that hunter's spawn prompt.
+3. Call `bounty_start_wave({ target_domain, wave_number: N, assignments })`; assignment agent IDs must be short `aN`, and MCP returns each assignment's capability routing.
+4. Spawn hunters only after `bounty_start_wave` succeeds. Use each returned `result.data.assignments[].hunter_agent` as the subagent type and that assignment's `handoff_token` only in its spawn prompt. The MCP capability router has already chosen the correct hunter family per surface; do not branch by `chain_family` in the orchestrator.
 
-Hunter spawn prompt must be compact and include:
+Generic hunter spawn template (uses the routed `assignment.hunter_agent`; the brief itself carries chain-specific context):
 ```
-Agent(subagent_type: "hunter-agent", name: "hunter-w[wave]-a[agent]", run_in_background: true, prompt: "
+Agent(subagent_type: "[assignment.hunter_agent]", name: "hunter-w[wave]-a[agent]", run_in_background: true, prompt: "
 Domain: [domain]
 Wave: w[wave]
 Agent: a[agent]
 Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]
+Capability pack: [assignment.capability_pack]. Brief profile: [assignment.brief_profile]. Hunter agent: [assignment.hunter_agent].
 First action: call bounty_read_hunter_brief({ target_domain: '[domain]', wave: 'w[wave]', agent: 'a[agent]', egress_profile: '[egress_profile]', block_internal_hosts: false }) and use .data, including run_context.
 Use surface_type, bug_class_hints, high_value_flows, evidence, surface_limits, coverage_summary, traffic_summary, audit_summary, circuit_breaker_summary, ranking_summary, intel_hints, and static_scan_hints as prioritization inputs for this one assigned surface.
 Egress profile: [egress_profile]. Pass this exact value as egress_profile on every bounty_http_scan call.
@@ -166,9 +168,7 @@ Final: call bounty_write_wave_handoff exactly once with target_domain, wave, age
 ")
 ```
 
-For smart-contract surfaces (`surface_type: "smart_contract"` in `attack_surface.json` and on the `bounty_start_wave` assignment), branch by `surface.chain_family`:
-
-When `chain_family: "evm"`, spawn the EVM hunter family:
+Chain-specific references (the router pins `assignment.brief_profile` and `surface.chain_family` per pack — `hunter-evm-agent`/`smart_contract_evm`/`chain_family: "evm"`, `hunter-svm-agent`/`smart_contract_svm`/`chain_family: "svm"`, `hunter-move-agent`/`smart_contract_move` covering `chain_family: "aptos"` and `chain_family: "sui"` (the role dispatches `bounty_aptos_*` vs `bounty_sui_*` internally), `hunter-substrate-agent`/`smart_contract_substrate`/`chain_family: "substrate"`, `hunter-cosmwasm-agent`/`smart_contract_cosmwasm`/`chain_family: "cosmwasm"`):
 ```
 Agent(subagent_type: "hunter-evm-agent", name: "hunter-evm-w[wave]-a[agent]", run_in_background: true, prompt: "
 Domain: [domain]
@@ -184,8 +184,6 @@ Checkpoint mode: [normal|paranoid|yolo].
 Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
 ")
 ```
-
-When `chain_family: "svm"`, spawn the SVM hunter family:
 ```
 Agent(subagent_type: "hunter-svm-agent", name: "hunter-svm-w[wave]-a[agent]", run_in_background: true, prompt: "
 Domain: [domain]
@@ -201,8 +199,6 @@ Checkpoint mode: [normal|paranoid|yolo].
 Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
 ")
 ```
-
-When `chain_family: "aptos"` or `chain_family: "sui"`, spawn the Move hunter family (one role handles both Aptos and Sui — the hunter dispatches by `surface.chain_family` internally to pick `bounty_aptos_*` vs `bounty_sui_*` tools):
 ```
 Agent(subagent_type: "hunter-move-agent", name: "hunter-move-w[wave]-a[agent]", run_in_background: true, prompt: "
 Domain: [domain]
@@ -219,8 +215,6 @@ Checkpoint mode: [normal|paranoid|yolo].
 Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
 ")
 ```
-
-When `chain_family: "substrate"`, spawn the Substrate / ink! hunter family:
 ```
 Agent(subagent_type: "hunter-substrate-agent", name: "hunter-substrate-w[wave]-a[agent]", run_in_background: true, prompt: "
 Domain: [domain]
@@ -236,8 +230,6 @@ Checkpoint mode: [normal|paranoid|yolo].
 Final: call bounty_write_wave_handoff exactly once with target_domain, wave, agent, surface_id, surface_status, handoff_token, summary, content, optional bypass_attempts, blocked_harness_runs, chain_notes, dead_ends, lead_surface_ids. Then call bounty_finalize_hunter_run. If finalization fails, fix the handoff and retry. After finalization succeeds, emit `BOB_HUNTER_DONE {"target_domain":"[domain]","wave":"w[wave]","agent":"a[agent]","surface_id":"[surface_id]"}` for Claude compatibility.
 ")
 ```
-
-When `chain_family: "cosmwasm"`, spawn the CosmWasm hunter family:
 ```
 Agent(subagent_type: "hunter-cosmwasm-agent", name: "hunter-cosmwasm-w[wave]-a[agent]", run_in_background: true, prompt: "
 Domain: [domain]

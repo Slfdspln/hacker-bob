@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Capability-pack routing (merged from main)
+
+- Added `mcp/lib/capability-packs.js` with a `web` pack and five smart-contract packs (`smart_contract_evm`, `smart_contract_svm`, `smart_contract_move`, `smart_contract_substrate`, `smart_contract_cosmwasm`). Each pack pins a `hunter_agent`, `brief_profile`, and role bundle; SC packs route by `surface.chain_family` (Aptos and Sui both go to `hunter-move-agent`).
+- Added `bounty_route_surfaces` MCP tool plus `mcp/lib/surface-router.js` and a new `surface-router-agent` (rendered for both Claude and Codex). The orchestrator now spawns the router after recon and only transitions RECON → AUTH after `surface-routes.json` is written.
+- `bounty_start_wave` now writes `capability_pack`, `hunter_agent`, and `brief_profile` into each persisted assignment and returns them in `result.data.assignments[]`. Hunters are spawned with `subagent_type: assignment.hunter_agent`; the orchestrator no longer branches by `chain_family` itself.
+- Web tools moved to a new `hunter-web` role bundle so the `hunter-agent` agent receives a web-only allowlist; SC tools stay in `hunter` and SC hunter agents (`hunter-evm-agent`, etc.) keep their full chain tooling.
+- `SubagentStop` hooks are now derived from `hunterAgentNamesForCapabilityPacks()` so each registered hunter family gets its own stop hook automatically; adding a pack adds a hook.
+- `bounty_read_hunter_brief` now omits `bob_spec_status` and `rpc_pool` for web profiles and includes `run_context.capability_pack` / `hunter_agent` / `brief_profile` so hunters can confirm their routing.
+
 ## [1.2.0] - 2026-05-02
 
 ### Deep recon mode (merged from main)
