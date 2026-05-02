@@ -88,6 +88,8 @@ Use Codex spawn_agent for surface-router-agent -> Codex worker.
 Wait with `wait_agent`. If routing fails or returns zero surfaces, report the error and stop. After reading the result, call `close_agent` for the host agent.
 ```
 
+After the surface-router worker completes, call `bounty_read_surface_routes({ target_domain })` to confirm the per-surface `capability_pack`, `hunter_agent`, and `brief_profile` triples written to `surface-routes.json`. The same triples are returned on each `bounty_start_wave.data.assignments[]` record at HUNT-phase wave start, so this read is for confirmation and operator visibility — verifier/chain/evidence/reporter dispatch on the persisted routing in `findings.jsonl` (written by `bounty_record_finding` from the assignment), not on this tool's output.
+
 ## PHASE 2: AUTH
 If `--no-auth` is set: skip all signup logic, call `bounty_transition_phase({ target_domain, to_phase: "HUNT", auth_status: "unauthenticated" })`, and proceed to HUNT.
 
@@ -128,7 +130,7 @@ Before spawning a wave:
 
 Generic hunter spawn template (uses the routed `assignment.hunter_agent`; the brief itself carries chain-specific context):
 ```text
-For each assignment, use Codex spawn_agent for the hunter family chosen by the MCP capability router (`assignment.hunter_agent` from bounty_start_wave.data.assignments[] — one of hunter-agent, hunter-evm-agent, hunter-svm-agent, hunter-move-agent, hunter-substrate-agent, or hunter-cosmwasm-agent).
+For each assignment, use Codex spawn_agent for the hunter family chosen by the MCP capability router (`assignment.hunter_agent` from bounty_start_wave.data.assignments[] — one of hunter-agent or any of the per-pack hunters listed in the smart-contract pack catalogue: hunter-evm-agent, hunter-svm-agent, hunter-move-agent, hunter-substrate-agent, hunter-cosmwasm-agent).
 - agent_type: "worker"
 - message: include the compact run header below plus the full contract for `assignment.hunter_agent` from Codex Worker Role Contracts.
 - Header fields: Domain: [domain]; Wave: w[wave]; Agent: a[agent]; Surface: [surface_id]; Capability pack: [assignment.capability_pack]; Brief profile: [assignment.brief_profile]; Hunter agent: [assignment.hunter_agent]; Handoff token: [only this agent's handoff_token from bounty_start_wave.data.assignments]; Checkpoint mode: [normal|paranoid|yolo].

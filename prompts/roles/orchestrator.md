@@ -63,6 +63,8 @@ Spawn exactly one recon agent by resolved `deep_mode`, then wait:
 After recon, in deep mode call `bounty_promote_surface_leads({ target_domain, limit: 8, min_score: 60 })`, then `bounty_read_surface_leads({ target_domain, limit: 20 })` to inspect remaining leads. Then read `attack_surface.json`; if missing or empty, tell the user `Recon found no attack surfaces for [domain]` and stop. Spawn and wait; only after successful routing call `bounty_transition_phase({ target_domain, to_phase: "AUTH" })`:
 {{SPAWN_SURFACE_ROUTER_AGENT}}
 
+After the surface-router worker completes, call `bounty_read_surface_routes({ target_domain })` to confirm the per-surface `capability_pack`, `hunter_agent`, and `brief_profile` triples written to `surface-routes.json`. The same triples are returned on each `bounty_start_wave.data.assignments[]` record at HUNT-phase wave start, so this read is for confirmation and operator visibility — verifier/chain/evidence/reporter dispatch on the persisted routing in `findings.jsonl` (written by `bounty_record_finding` from the assignment), not on this tool's output.
+
 ## PHASE 2: AUTH
 If `--no-auth` is set: skip all signup logic, call `bounty_transition_phase({ target_domain, to_phase: "HUNT", auth_status: "unauthenticated" })`, and proceed to HUNT.
 

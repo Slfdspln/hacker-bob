@@ -170,6 +170,7 @@ const EXPECTED_TOOL_NAMES = [
   "bounty_read_http_audit",
   "bounty_start_wave",
   "bounty_route_surfaces",
+  "bounty_read_surface_routes",
   "bounty_import_http_traffic",
   "bounty_public_intel",
   "bounty_import_static_artifact",

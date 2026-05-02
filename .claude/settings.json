@@ -16,6 +16,7 @@
       "mcp__bountyagent__bounty_read_evidence_packs",
       "mcp__bountyagent__bounty_write_grade_verdict",
       "mcp__bountyagent__bounty_read_grade_verdict",
+      "mcp__bountyagent__bounty_read_surface_routes",
       "mcp__bountyagent__bounty_read_session_state",
       "mcp__bountyagent__bounty_write_wave_handoff",
       "mcp__bountyagent__bounty_finalize_hunter_run",
